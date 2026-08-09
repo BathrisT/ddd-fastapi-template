@@ -9,7 +9,7 @@ endif
 APP_DIR = ./app
 TEST_DIR = ./tests
 
-.PHONY: lint lint-check layout-check interface-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit migrate install infra-up infra-down api worker scheduler
+.PHONY: lint lint-check layout-check interface-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit review-pack migrate install infra-up infra-down api worker scheduler
 
 lint:
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) --fix $(ARGS)
@@ -88,6 +88,12 @@ bandit:
 check: lint-check typecheck layers test-unit
 
 precommit: lint-check typecheck layers schema-check test bandit
+
+# Пакеты для ревью-гейта: по файлу на проход линзы (весь дифф с окружением,
+# у каждого прохода свой порядок разделов) плюс журналы линз. Собирается перед
+# каждым раундом ревью — дерево изменилось, значит пакеты устарели.
+review-pack:
+	poetry run python .claude/hooks/build_pack.py .
 
 migrate:
 	poetry run alembic upgrade head

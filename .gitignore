@@ -52,3 +52,7 @@ uploads/
 # OS
 .DS_Store
 Thumbs.db
+
+# Дампы падений msys/Git Bash — валятся в корень репозитория и норовят
+# попасть в `git add -A`
+*.stackdump

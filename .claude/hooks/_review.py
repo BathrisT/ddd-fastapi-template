@@ -1,0 +1,166 @@
+"""Общее знание ревью-гейта: база диффа, его хэш, имена артефактов, кворум.
+
+Модуль заведён потому, что расхождение здесь не даёт ошибки. Оно даёт линзы,
+которые смотрели один снимок дерева, и гейт, который сверяет другой, — а это
+ровно та беда, от которой гейт и существует. Раньше хэш считался в двух местах
+(в `review_gate.py` и командой из `review_prompt.md`), и совпадали они только
+потому, что кто-то держал их одинаковыми руками.
+
+Лежит в `.claude/hooks/`, а не в `scripts/`, чтобы гейт остался самодостаточным:
+`.claude/` копируется в другой проект целиком и не должен зависеть от того, как
+там устроена сборка.
+
+CLI для тех, кому модуль не импортировать (линза считает свой хэш сама):
+
+    python .claude/hooks/_review.py hash
+    python .claude/hooks/_review.py base
+"""
+
+import hashlib
+import subprocess
+import sys
+from pathlib import Path
+
+# Три линзы, у каждой три независимых прохода по ОДНОМУ И ТОМУ ЖЕ диффу.
+# Проходы не делят между собой файлы: деление требует ответить, кто отвечает за
+# кусок, а внятного ответа на это нет — зато оно лишает смысла кворум ниже.
+LENS_COUNT = 3
+COPIES_PER_LENS = 3
+
+# Сколько проходов линзы должны сказать CLEAN, чтобы линза считалась чистой.
+# Не единогласие: с девятью агентами вероятность, что хоть один что-нибудь
+# поднимет, высока, и требование «все девять чисты» дало бы БОЛЬШЕ раундов, а
+# не меньше. Двое из трёх — это фильтр «находка, всплывшая в одном проходе из
+# трёх, скорее шум»; он применим именно потому, что проходы одинаковы по
+# мандату. Одиночная находка при этом не пропадает — она уходит в журнал линзы.
+QUORUM = 2
+
+# Больше этого числа раундов цикл не имеет смысла: окно сходимости у такого
+# ревью 3–5 раундов, а дальше растёт не полнота, а притупление внимания.
+# Проверкой не является — гейт раунды не считает; это правило для того, кто
+# гоняет цикл.
+MAX_ROUNDS = 5
+
+_ARTIFACT = ".review-lens-{lens}-{copy}.md"
+_NOTES = ".review-lens-{lens}.notes.md"
+_PACK = ".review-pack-{copy}.md"
+
+
+class Review:
+    """Статические справки о текущем снимке дерева."""
+
+    @staticmethod
+    def run_git(cwd: str, *args: str) -> bytes:
+        """Сырые байты вывода git.
+
+        Байты, а не текст: хэш считается по ним, а декодирование с заменой
+        сминает разные некорректные последовательности в один и тот же символ —
+        и два разных диффа получили бы один хэш.
+
+        `core.quotepath=false` — не косметика. По умолчанию git экранирует
+        не-ASCII в путях восьмеричными последовательностями
+        (`"docs/\\320\\277..."`), и такой путь не совпадает с настоящим именем
+        файла: `git diff -- <экранированный путь>` не находит ничего, то есть
+        сборщик пакета молча отдал бы пустой раздел. В этом репозитории есть
+        `docs/правила/`, так что срабатывает это на первой же правке
+        документации, а не в теории.
+        """
+        result = subprocess.run(
+            ["git", "-C", cwd, "-c", "core.quotepath=false", *args],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            check=True,
+        )
+        return result.stdout
+
+    @staticmethod
+    def base(cwd: str) -> str:
+        """Дерево, с которым сравниваем: текущий коммит, а до первого — пустое.
+
+        `git diff HEAD` до первого коммита падает с кодом 128 вместо того,
+        чтобы показать «всё новое». Это не угол: через это проходит первый
+        коммит шаблона и каждого проекта, заведённого из него.
+
+        Хэш пустого дерева спрашивается у git, а не вписан константой: у
+        репозитория с `--object-format=sha256` он другой.
+
+        Возвращается РАЗРЕШЁННЫЙ идентификатор коммита, а не строка «HEAD», и
+        это не косметика. `HEAD` — символическая ссылка: до коммита и после
+        коммита она читается одинаково. Журнал линзы хранит базу, чтобы понять,
+        что прошлое ревью закончилось коммитом и заметки пора обнулить, — со
+        строкой «HEAD» это сравнение не сработало бы НИКОГДА, и журналы копили
+        бы заметки про давно уехавший код. На дифф замена не влияет: `git diff
+        <sha>` и `git diff HEAD` дают побайтово одно и то же, потому что в
+        заголовках диффа стоят хэши блобов, а не имя ссылки.
+        """
+        probe = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "-q", "--verify", "HEAD"],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            encoding="utf-8",
+        )
+        if probe.returncode == 0:
+            return probe.stdout.strip()
+        return Review.run_git(cwd, "hash-object", "-t", "tree", "--stdin").decode().strip()
+
+    @staticmethod
+    def hash(cwd: str, base: str | None = None) -> str:
+        """Отпечаток текущего диффа. К нему привязываются вердикты линз.
+
+        CRLF нормализуется в LF: `git add` умеет переписать переносы строк по
+        `core.autocrlf`, не изменив ни одного смысла, и без нормализации это
+        обнуляло бы уже выданные вердикты.
+        """
+        raw = Review.run_git(cwd, "diff", base or Review.base(cwd))
+        return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()[:16]
+
+    @staticmethod
+    def changed_files(cwd: str, base: str) -> list[tuple[int, int, str]]:
+        """`(добавлено, удалено, путь)`. У бинарных файлов счётчики нулевые."""
+        out = Review.run_git(cwd, "diff", base, "--numstat").decode("utf-8", errors="replace")
+        files: list[tuple[int, int, str]] = []
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            added, deleted, path = parts[0], parts[1], parts[2]
+            files.append(
+                (
+                    int(added) if added.isdigit() else 0,
+                    int(deleted) if deleted.isdigit() else 0,
+                    path,
+                )
+            )
+        return files
+
+    @staticmethod
+    def artifact(claude_dir: Path, lens: int, copy: int) -> Path:
+        return claude_dir / _ARTIFACT.format(lens=lens, copy=copy)
+
+    @staticmethod
+    def notes(claude_dir: Path, lens: int) -> Path:
+        """Журнал ОДИН на линзу, а не на проход.
+
+        Три прохода линзы идут параллельно и записей друг друга внутри раунда
+        не увидят — так и задумано, избыточность внутри раунда и есть то, ради
+        чего их трое. Смысл журнала межраундовый: к следующему разу всё, что
+        уже рассматривали и отложили, лежит в одном месте, а не размазано по
+        трём складам, каждый из которых надо набить заново.
+        """
+        return claude_dir / _NOTES.format(lens=lens)
+
+    @staticmethod
+    def pack(claude_dir: Path, copy: int) -> Path:
+        return claude_dir / _PACK.format(copy=copy)
+
+
+if __name__ == "__main__":
+    _cwd = sys.argv[2] if len(sys.argv) > 2 else "."
+    _what = sys.argv[1] if len(sys.argv) > 1 else "hash"
+    if _what == "base":
+        print(Review.base(_cwd))
+    elif _what == "hash":
+        print(Review.hash(_cwd))
+    else:
+        print(f"неизвестная команда: {_what}; ожидается hash или base", file=sys.stderr)
+        sys.exit(2)
