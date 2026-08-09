@@ -1,0 +1,299 @@
+[tool.poetry]
+name = "ddd-fastapi-template"
+version = "0.1.0"
+description = "Шаблон backend-проекта: FastAPI + Taskiq + SQLAlchemy, слои DDD, сторожа раскладки"
+authors = ["Bathris <bathris12@gmail.com>"]
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = ">=3.13,<3.15"
+fastapi = ">=0.115"
+uvicorn = { version = "^0.35", extras = ["standard"] }
+sqlalchemy = { version = "^2.0", extras = ["asyncio"] }
+asyncpg = "^0.30"
+alembic = "^1.14"
+pydantic = { version = "^2.10", extras = ["email"] }
+pydantic-settings = "^2.7"
+redis = { version = "^5.2", extras = ["hiredis"] }
+taskiq = "^0.11"
+taskiq-redis = "^1.0"
+openai = "^1.58"
+loguru = "^0.7"
+httpx = { extras = ["socks"], version = "^0.28.1" }
+sentry-sdk = { version = "^2.0", extras = ["fastapi"] }
+cryptography = "^46.0.6"
+tzdata = "^2026.1"
+dishka = "^1.10.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+pytest-asyncio = ">=0.25"
+pytest-cov = "^6.0"
+pytest-xdist = "^3.6"
+ruff = "^0.8"
+mypy = "^1.13"
+bandit = { version = "^1.8", extras = ["toml"] }
+pre-commit = "^4.0"
+testcontainers = { version = "^4.8", extras = ["postgres"] }
+sqlalchemy = { version = "^2.0", extras = ["mypy"] }
+tach = "^0.34.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+# ---------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.report]
+omit = [
+    "app/interface/api/schemas/*",
+    "app/infrastructure/db/models/*",
+    "app/application/dto/*",
+    "app/application/ports/*",
+    "app/entrypoint_*.py",
+    "app/config.py",
+    "app/logging.py",
+    "app/**/__init__.py",
+]
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+strict = false
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = ["taskiq.*", "taskiq_redis.*", "testcontainers.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+extend-select = [
+    "A",      # flake8-builtins
+    "ANN",    # flake8-annotations
+    "B",      # flake8-bugbear
+    # Наивное время. Греп по строкам ловит `date.today()`, но мимо него проходят
+    # `datetime.utcnow()`, `datetime.utcfromtimestamp()` и безтайзонный
+    # `datetime(...)` — те же сутки разницы, только другим написанием.
+    # Перечислять формы регуляркой бесполезно, их придумывают быстрее; DTZ
+    # разбирает вызов, а не строку.
+    "DTZ",    # flake8-datetimez
+    "FAST",   # FastAPI
+    "PGH003", # disallow bare # type: ignore (require error code)
+    "S101",   # disallow assert in app/
+    "S608",   # SQL через f-string/конкатенацию
+    "TID251", # disallow banned API (typing.cast)
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI Query/Path/Body/Depends are designed as default argument values
+extend-immutable-calls = [
+    "fastapi.Query", "fastapi.Path", "fastapi.Body",
+    "fastapi.Header", "fastapi.Cookie", "fastapi.Form",
+    "fastapi.File", "fastapi.Depends", "fastapi.Security",
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.cast" = { msg = "Use type narrowing instead of typing.cast()" }
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ANN", "A"]
+"migrations/**" = ["ANN", "E501"]
+"app/interface/api/schemas/**" = ["ANN"]
+"app/application/dto/**" = ["ANN"]
+"app/interface/worker/handlers/**" = ["ANN401"] # taskiq: kwargs задач
+
+# ---------------------------------------------------------------------------
+# bandit
+# ---------------------------------------------------------------------------
+[tool.bandit]
+skips = [
+    "B104", # bind 0.0.0.0 — намеренно, внутри docker-сети
+]
+
+# ---------------------------------------------------------------------------
+# interface / FastAPI — читает scripts/check_fastapi_routes.py
+# ---------------------------------------------------------------------------
+[tool.fastapi_routes]
+# Каталоги, где живут ТОЛЬКО маршруты. Файл без единого маршрута — чужак:
+# разбор тела принадлежит `parsing/`, проверка входа — `guards/`,
+# бизнес-правило — `application/`.
+route_dirs = ["app/interface/api/routes"]
+
+http_methods = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+# ---------------------------------------------------------------------------
+# package coverage — читает scripts/check_package_coverage.py
+# ---------------------------------------------------------------------------
+[tool.package_coverage]
+# Пакеты, где сосед не имеет права потеряться: агрегатор обязан его назвать.
+# Как именно включать — дело автора: в `routes/` бывает два роутера с разными
+# гейтами в одном файле, и требовать единообразия значило бы запретить ровно
+# то место, где принимается решение о доступе.
+packages = [
+    "app/interface/api/routes",
+    # Реестр ORM-моделей — тот же сорт тихого списка, но последствие дороже
+    # отсутствующей ручки: `migrations/env.py` импортирует только этот пакет,
+    # и модель, не названная в `__init__.py`, для `Base.metadata` не
+    # существует. `alembic revision --autogenerate` предложит УДАЛИТЬ её
+    # таблицу, а `make schema-check` промолчит — он сверяет с той же неполной
+    # метадатой. Проверка при этом та же самая: своего кода не нужно, нужна
+    # строка здесь.
+    "app/infrastructure/db/models",
+]
+
+[tool.db_access]
+# Кто открывает сессию. У сессии есть владелец: контейнер открывает её на вход
+# и закрывает вместе с ним. Всё, что открывает сессию само, решает за сценарий,
+# что и когда зафиксировано.
+session_markers = ["AsyncSession", "async_sessionmaker", "sessionmaker"]
+session_owners = [
+    # Фабрика сессий и сессия на вход — сама композиция.
+    "app/composition/providers/process.py",
+    "app/composition/providers/request.py",
+    # Автономная запись: должна пережить транзакцию сценария (журнал доставки,
+    # выданный внешней системой идентификатор). Фасад ОДИН — иначе «своя
+    # сессия» заводится по месту.
+    "app/infrastructure/db/autonomous_session.py",
+]
+
+# Где можно писать SQL. Золотое правило 4 описывает выход из репозитория
+# (доменные модели), это — вход: запрос к таблице пишет репозиторий.
+orm_packages = ["sqlalchemy", "alembic"]
+orm_allowed = [
+    # Слой доступа к данным: ORM-модели, репозитории, committer, engine.
+    "app/infrastructure/db",
+    # Сборка графа: dishka резолвит зависимости ПО ТИПУ, и провайдер сессии без
+    # импорта её типа не написать. Логики здесь нет по определению — только
+    # передача уже созданного.
+    "app/composition/providers",
+]
+
+[tool.entrypoint_registry]
+# Каталог точек входа → файл, который обязан их назвать. Реестр ведут руками,
+# и он ровно поэтому расходится с каталогом: дописал обработчик, забыл строку.
+# Отказа не будет — сообщение с незарегистрированным именем просто пропадёт.
+pairs = [
+    { entries = "app/interface/worker/handlers", registry = "app/composition/worker_tasks.py" },
+]
+
+# ---------------------------------------------------------------------------
+# composition — читает scripts/check_composition.py
+# Правило целиком: docs/правила/композиция-и-скоупы.md
+# ---------------------------------------------------------------------------
+[tool.composition]
+# «Инфраструктура собирается только в композиции» тут НЕ описано намеренно —
+# это делает tach: он запрещает сам импорт, а собрать неимпортируемое нельзя.
+# Перечислять имена классов было бы денилистом: течёт на переименовании и
+# молчит на новом классе. Целевая раскладка модулей — в правиле.
+#
+# Здесь остаётся то, что через tach не выразить: `Depends` приходит из fastapi,
+# который роутам нужен и так, ради `@router.get`. Отличить «импортирую ради
+# маршрута» от «импортирую ради внедрения» можно только по месту вызова.
+injection_markers = ["Depends", "Security"]
+
+# Где живёт сборка графа. Ей контейнер положен по определению, поэтому
+# правило про service locator сюда не применяется.
+composition_roots = ["app/composition"]
+
+# Верификаторы входа — их оборачивать в Depends можно ГДЕ УГОДНО: способ
+# проверки объявляется там же, где выбирается обработчик, то есть на роутере
+# или на самом маршруте. Это не внедрение зависимости, это контракт входа.
+# В шаблоне их нет: появится вход с проверкой — имя функции-верификатора
+# дописывается сюда, и это видно в ревью.
+verifiers = []
+
+# Класс маршрута, делающий подстановку из контейнера. Без него `FromDishka` в
+# хендлере молча не сработает, а отказ выглядит как «параметр не пришёл».
+# Ставится на ЛИСТОВЫХ роутерах: include_router сохраняет класс ребёнка.
+route_class = "DishkaRoute"
+
+# Контейнер, доставаемый объектом самому себе, — service locator, и правило 5
+# композиции запрещает его прямым текстом. Тип ловим по имени, состояние запроса — по
+# имени атрибута; в самой композиции контейнер, разумеется, законен.
+container_types = ["AsyncContainer", "Container"]
+container_attrs = ["dishka_container"]
+# Пути, которые собирают свои зависимости сами. Две причины бывают законными:
+# верификатор входа (способ проверки принадлежит маршрутизации, не контейнеру)
+# и вложенный модуль со своей композицией.
+injection_allowed = []
+
+# ---------------------------------------------------------------------------
+# code layout — читают: check_module_functions.py, check_file_length.py,
+#               check_layer_folders.py, check_duplicated_constants.py,
+#               check_class_shape.py
+# ---------------------------------------------------------------------------
+[tool.code_layout]
+# Корень исходников. Все проверки раскладки смотрят ТОЛЬКО сюда; если каталога
+# нет, они падают, а не печатают «OK» — пустой скан это ошибка настройки, и
+# зелёная галка на нём была бы обманом.
+source_root = "app"
+
+# Как в этом проекте зовётся сценарий: каталог, суффикс класса, имя
+# единственного публичного метода. Слова местные — в соседнем проекте это
+# `interactors/`, `Interactor` и `handle`; зашитые в скрипт, они дали бы
+# проверку, которая там молча ничего не находит.
+use_cases_dir = "application/use_cases"
+use_case_suffix = "UseCase"
+use_case_entrypoint = "execute"
+
+# Девять медиан типового файла, а не придирка: файл длиннее — это, как
+# правило, несколько несвязанных обязанностей в одном месте.
+max_lines = 300
+
+# Одно значение, разложенное константами по N файлам, — скорее всего одно
+# правило, размноженное копипастой.
+duplicated_constant_files = 5
+
+# Плоский список из полусотни файлов — свалка, а не раскладка. Предметная
+# область — подпапкой внутри роли, а не префиксом в имени файла:
+# `note_next_request_repo.py` среди 39 соседей находится только грепом,
+# `notes/next_request_repo.py` — глазами.
+max_files_per_dir = 15
+
+# Функции уровня модуля разрешены ТОЛЬКО там, где имя функции требует фреймворк.
+# Инлайновой пометки-побега нет намеренно: единственный способ завести исключение —
+# дописать сюда путь, и это видно в ревью.
+#
+# `app/interface` открыт целиком: это слой адаптеров, он и существует, чтобы
+# разговаривать с фреймворками. Если ты пишешь там доменную логику — проблема
+# не в функции, а в том, что файл лежит не в том слое.
+# `app/infrastructure` целиком открывать нельзя: там живёт настоящая логика,
+# ради которой правило и заводится.
+module_functions_allowed = [
+    "app/interface",                       # FastAPI: хендлеры, Depends, фабрика приложения, обработчики ошибок
+    "app/infrastructure/worker/broker.py", # taskiq: фабрика брокера
+    "app/entrypoint_worker.py",            # taskiq: хук WORKER_SHUTDOWN по имени функции
+    "app/logging.py",                      # loguru: настройка логгера
+]
+
+# Имена-помойки: папка, куда кладут, чтобы не принимать решение.
+banned_folder_names = ["utils", "helpers", "common", "misc", "shared", "core", "lib"]
+
+# Подпапка слоя называет РОЛЬ (что за штука), а не предметную область (про что).
+# Предметная область — уровнем ниже, внутри роли.
+# У infrastructure и interface ось другая — «к чему адаптируемся» и «по какому
+# протоколу входим», её заранее не перечислить, поэтому их тут нет.
+[tool.code_layout.layer_folders]
+"app/domain" = ["models", "events", "services", "catalog"]
+"app/application" = ["dto", "ports", "services", "use_cases"]

@@ -1,0 +1,105 @@
+x-app: &app
+  build: .
+  env_file: .env
+  restart: unless-stopped
+  environment:
+    # Внутри compose-сети адреса другие, чем на хосте: сервисы зовутся по имени.
+    # Эти две пары переопределяют то, что в .env написано для локального запуска.
+    DATABASE__HOST: postgres
+    DATABASE__PORT: 5432
+    REDIS__HOST: redis
+    REDIS__PORT: 6379
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DATABASE__USER}
+      POSTGRES_PASSWORD: ${DATABASE__PASSWORD}
+      POSTGRES_DB: ${DATABASE__NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE__USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      sh -c '[ -n "$$REDIS__PASSWORD" ]
+      && exec redis-server --requirepass "$$REDIS__PASSWORD"
+      || exec redis-server'
+    env_file: .env
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: >
+        sh -c '[ -n "$$REDIS__PASSWORD" ]
+        && redis-cli -a "$$REDIS__PASSWORD" ping
+        || redis-cli ping'
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Отдельным сервисом, а не командой внутри api: миграции обязаны пройти ОДИН
+  # раз и до всех остальных. Запуск их из api означал бы гонку при масштабе >1.
+  migrations:
+    <<: *app
+    restart: "no"
+    command: alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: python -m app.entrypoint_api
+    ports:
+      - "127.0.0.1:${API__PORT:-8000}:8000"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # curl нет в slim-образе — проверяем через уже установленный Python.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  worker:
+    <<: *app
+    # --max-async-tasks: сколько задач воркер тянет одновременно. Дефолт 100
+    # против пула БД в 10+5 означает, что 85 задач ждут pool_timeout и падают —
+    # а ретраев в брокере нет. Держим по числу соединений: очередь подождёт,
+    # зато сделает.
+    command: taskiq worker app.entrypoint_worker:broker --max-async-tasks 10
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    <<: *app
+    command: taskiq scheduler app.entrypoint_scheduler:scheduler
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:

@@ -1,0 +1,54 @@
+# Claude Code (local AI assistant settings) — but track the shared review-gate hook
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/hooks/*
+!.claude/agents/
+!.claude/agents/*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# mypy / ruff caches
+.mypy_cache/
+.ruff_cache/
+
+# pytest
+.pytest_cache/
+.coverage
+# Параллельный прогон оставляет по файлу на воркер (`.coverage.<host>.<pid>.<rand>`);
+# они сливаются в `.coverage` и живут ровно до следующего запуска
+.coverage.*
+htmlcov/
+
+# Media uploads
+media/
+uploads/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

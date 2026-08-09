@@ -1,0 +1,76 @@
+# tach — контроль зависимостей между слоями DDD
+# Документация: https://docs.gauge.sh/usage/configuration
+#
+# Правила:
+#   domain         — изолирован полностью (только stdlib + domain/*)
+#   application    — только domain
+#   infrastructure — domain + application
+#   interface      — domain + application. БЕЗ infrastructure: входы получают
+#                    зависимости из контейнера и работают с портами
+#   composition    — видит всё: она и есть сборка графа
+#
+# Правило целиком: docs/правила/композиция-и-скоупы.md
+
+source_roots = ["."]
+
+# Циклов между СЛОЯМИ нет: `composition → interface` есть, обратного ребра нет
+# (обработчик про композицию не знает, регистрация происходит снаружи него).
+# Флаг выключен из-за циклов ВНУТРИ пакетов — например, `routes/__init__.py`
+# собирает роутеры, которые импортируют схемы из соседнего `schemas/`.
+forbid_circular_dependencies = false
+
+[[modules]]
+path = "app.domain"
+depends_on = []
+
+[[modules]]
+path = "app.application"
+depends_on = [
+    { path = "app.domain" },
+]
+
+[[modules]]
+path = "app.infrastructure"
+depends_on = [
+    { path = "app.domain" },
+    { path = "app.application" },
+]
+
+# Входы: HTTP-роуты, проверки входа, обработчики очереди, схемы.
+[[modules]]
+path = "app.interface"
+depends_on = [
+    { path = "app.domain" },
+    { path = "app.application" },
+]
+
+# app.py — ТОЧКА ВХОДА веб-приложения, а не его обработчик: она собирает
+# контейнер, вешает роутеры и закрывает ресурсы. По правилу ей положено
+# импортировать композицию, а лежит она внутри `interface` только потому, что
+# `uvicorn` получает путь строкой `app.interface.api.app:create_app`.
+#
+# `unchecked` здесь — не «мы разрешили нарушение», а «этот файл проверяется
+# другим правилом»: он единственный в `interface`, кому композиция положена,
+# и это видно по имени.
+[[modules]]
+path = "app.interface.api.app"
+unchecked = true
+
+# composition — проводка. Единственный модуль, который видит и инфраструктуру,
+# и входы: он собирает граф зависимостей и держит реестр обработчиков.
+# Его импортируют ТОЛЬКО точки входа (entrypoint_*.py), больше никто.
+# Обратного ребра нет: обработчик входа композицию не импортирует, регистрация
+# происходит снаружи него — поэтому цикла не возникает.
+[[modules]]
+path = "app.composition"
+depends_on = [
+    { path = "app.domain" },
+    { path = "app.application" },
+    { path = "app.infrastructure" },
+    { path = "app.interface" },
+]
+
+[external]
+exclude_paths = [
+    "migrations",
+]
