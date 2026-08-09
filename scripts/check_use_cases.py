@@ -1,4 +1,8 @@
-"""Guard the shape of `app/application/use_cases/`: один файл — один сценарий.
+"""Правила сценариев: один файл — один сценарий, и сценарии не композируются.
+
+Первые три требования — про форму файла в `use_cases/`, последние два — про то,
+кто имеет право сценарий вызывать. Проверка одна, потому что нарушение любого
+из пяти означает одно и то же: в запросе выполняется больше одного сценария.
 
 Три требования к файлу в `use_cases/`:
 
@@ -16,8 +20,38 @@
 3. Носители данных (`@dataclass`-команды, енумы, pydantic-модели, Protocol,
    исключения) не в счёт: `CreatePlanCommand` рядом со своим сценарием — норма.
 
-Проверяется только `use_cases/`. Сервис волен иметь сколько угодно публичных
-методов — у него другая работа.
+Требования 1–3 проверяются только в `use_cases/`. Сервис волен иметь сколько
+угодно публичных методов — у него другая работа.
+
+Ещё два требования смотрят на весь `app/`, потому что нарушить их можно откуда
+угодно:
+
+4. **Держишь чужой сценарий — не коммитишь сам.** Сессия одна на вход, поэтому
+   `commit()` в классе, которому внедрили `*UseCase`, фиксирует заодно чужую
+   недоделанную работу, а следом уходит событие — и воркер берётся за половину
+   запроса раньше, чем вызывающий упадёт. Транзакцию откатить можно,
+   поставленную задачу нельзя.
+
+   Запрещено именно это, а не внедрение сценария как таковое. Проверка
+   «`*UseCase` не может быть аргументом `__init__`» выглядит строже и была бы
+   бесполезной: на боевом проекте, из которого вырос шаблон, она даёт 15
+   срабатываний, и все до одного ложные. Законных потребителей чужого сценария
+   там два, и оба своих записей не делают — **диспетчер** (`GoalsHandler` берёт
+   девять сценариев и на апдейт зовёт ровно один) и **перечислитель**
+   (`AdvancePortalGoalChainsUseCase` зовёт внутренний сценарий по каждому
+   кандидату). Классов, которые держат сценарий и коммитят сами, там ноль: в
+   этой формулировке правило фиксирует сложившуюся практику, а не запрещает
+   работающий код.
+
+5. **Вход просит не больше одного сценария.** Хендлер с двумя
+   `FromDishka[*UseCase]` — тот же самый дефект, только собранный не через
+   конструктор, а прямо в обработчике: два `commit()` на один запрос. Признак
+   входа здесь не путь, а сам `FromDishka` — так проверка не промахнётся мимо
+   каталога, заведённого завтра.
+
+Оба требования про одно: **один `commit()` на вход**. Понадобится
+переиспользовать не шаг, а последовательность шагов с событиями — это сигнал
+переносить `commit()` на границу входа, и тогда оба снимаются целиком.
 """
 
 import ast
@@ -45,6 +79,7 @@ USE_CASES = require_dir(
 )
 _SUFFIX = str(_LAYOUT.get("use_case_suffix", "UseCase"))
 _ENTRY = str(_LAYOUT.get("use_case_entrypoint", "execute"))
+_COMMIT = str(_LAYOUT.get("commit_method", "commit"))
 
 
 def _public_methods(node: ast.ClassDef) -> list[str]:
@@ -97,15 +132,133 @@ def check_use_cases() -> list[str]:
     return errors
 
 
+def _parsed(path: Path) -> ast.AST | None:
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError:  # pragma: no cover — синтаксис ловит линтер
+        return None
+
+
+def _annotation_text(annotation: ast.expr | None) -> str:
+    """Текст аннотации без кавычек.
+
+    Кавычки снимаются не для красоты: при `from __future__ import annotations`
+    и в отложенных ссылках тип записан строковой константой, и правило,
+    сравнивающее «как есть», молчало бы ровно в тех файлах, где аннотации
+    отложены, — то есть выборочно и незаметно.
+    """
+    if annotation is None:
+        return ""
+    text = ast.unparse(annotation).strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        text = text[1:-1].strip()
+    return text
+
+
+def _injected_type(annotation: ast.expr | None) -> str:
+    """Тип внутри `FromDishka[...]`, иначе пусто.
+
+    Признак входа — сам `FromDishka`, а не каталог: так проверка не промахнётся
+    мимо входа, заведённого в новой папке.
+    """
+    if not isinstance(annotation, ast.Subscript):
+        return ""
+    marker = annotation.value
+    name = getattr(marker, "id", None) or getattr(marker, "attr", None)
+    if name != "FromDishka":
+        return ""
+    return _annotation_text(annotation.slice)
+
+
+def _args_of(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.arg]:
+    return [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+
+
+def _init_of(node: ast.ClassDef) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    for item in node.body:
+        if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef) and item.name == "__init__":
+            return item
+    return None
+
+
+def _calls_commit(node: ast.ClassDef) -> int:
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
+            if sub.func.attr == _COMMIT:
+                return sub.lineno
+    return 0
+
+
+def check_no_commit_around_scenario() -> list[str]:
+    """Требование 4: держишь чужой сценарий — не коммитишь сам."""
+    errors: list[str] = []
+    for path in sorted(source_root().rglob("*.py")):
+        tree = _parsed(path)
+        if tree is None:
+            continue
+        relative = path.relative_to(ROOT).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            init = _init_of(node)
+            if init is None:
+                continue
+            scenarios = [
+                requested
+                for arg in _args_of(init)
+                if arg.arg != "self" and (requested := _annotation_text(arg.annotation)).endswith(
+                    _SUFFIX
+                )
+            ]
+            if not scenarios:
+                continue
+            commit_line = _calls_commit(node)
+            if not commit_line:
+                continue
+            errors.append(
+                f"{relative}:{commit_line}: `{node.name}` получил сценарий "
+                f"({', '.join(scenarios)}) и коммитит сам. Сессия одна на вход: этот "
+                f"`{_COMMIT}()` зафиксирует чужую недоделанную работу, а следом уйдёт "
+                f"событие — отозвать его нечем. Коммитит тот, чья работа"
+            )
+    return errors
+
+
+def check_one_scenario_per_entry() -> list[str]:
+    """Требование 5: вход просит не больше одного сценария."""
+    errors: list[str] = []
+    for path in sorted(source_root().rglob("*.py")):
+        tree = _parsed(path)
+        if tree is None:
+            continue
+        relative = path.relative_to(ROOT).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            requested = [
+                injected
+                for arg in _args_of(node)
+                if (injected := _injected_type(arg.annotation)).endswith(_SUFFIX) and injected
+            ]
+            if len(requested) > 1:
+                errors.append(
+                    f"{relative}:{node.lineno}: вход `{node.name}` просит "
+                    f"{len(requested)} сценария ({', '.join(requested)}) — это два "
+                    f"`commit()` на один вход и событие, ушедшее до конца работы. "
+                    f"Один вход — один сценарий"
+                )
+    return errors
+
+
 def main() -> int:
-    errors = check_use_cases()
+    errors = check_use_cases() + check_no_commit_around_scenario() + check_one_scenario_per_entry()
     if errors:
         for error in errors:
             print(error)
-        print(f"\n{len(errors)} нарушений формы use case'ов.")
-        print("Один файл — один сценарий: класс `*UseCase` с единственным `execute`.")
+        print(f"\n{len(errors)} нарушений правил сценариев.")
+        print("Один файл — один сценарий; чужой сценарий не коммитят; один commit() на вход.")
         return 1
-    print("Use cases: один файл — один сценарий с единственным execute. OK.")
+    print("Use cases: один файл — один сценарий, один commit() на вход. OK.")
     return 0
 
 
