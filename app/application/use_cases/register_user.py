@@ -23,7 +23,7 @@ from app.application.ports.committer import Committer
 from app.application.ports.event_publisher import EventPublisher
 from app.application.ports.repositories.user_repo import UserRepo
 from app.domain.events.user_registered import UserRegistered
-from app.domain.exceptions import ConflictError, ValidationError
+from app.domain.exceptions import ConflictError
 from app.domain.models.user import User
 
 
@@ -40,24 +40,23 @@ class RegisterUserUseCase:
         self._events = events
 
     async def execute(self, command: RegisterUserCommand) -> User:
-        email = command.email.strip().lower()
-        name = command.name.strip()
-        if not name:
-            raise ValidationError("Имя не может быть пустым")
+        # Правила заведения — у сущности: они обязаны действовать на любом
+        # входе, а не только в этом сценарии. Сценарию остаётся оркестровка.
+        user = User.register(command.email, command.name)
 
         # Проверка ради внятного отказа, а не ради корректности: между ней и
         # вставкой успевает влезть параллельный запрос. Настоящий сторож —
         # уникальный индекс в базе, и репозиторий переводит его отказ в тот же
         # `ConflictError`. Без проверки пользователь получал бы 409 только на
         # гонке, а на обычном повторе — тоже 409, но из глубины адаптера.
-        if await self._users.get_by_email(email) is not None:
-            raise ConflictError(f"Пользователь с почтой {email} уже есть")
+        if await self._users.get_by_email(user.email) is not None:
+            raise ConflictError(f"Пользователь с почтой {user.email} уже есть")
 
         # Работаем с ВОЗВРАЩЁННЫМ объектом, а не с переданным: идентификатор
         # присваивает база, и у аргумента он так и остаётся нулевым. Событие с
         # `user_id=0` ничего бы не сломало на месте — оно просто ушло бы в
         # никуда, а обработчик написал бы «пользователя 0 больше нет».
-        saved = await self._users.save(User(id=0, email=email, name=name))
+        saved = await self._users.save(user)
         await self._committer.commit()
 
         await self._events.publish(UserRegistered(user_id=saved.id))
