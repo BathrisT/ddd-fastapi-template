@@ -23,7 +23,7 @@ import-строк в точках входа, ведущийся руками, �
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 from dishka.integrations.taskiq import inject
 from taskiq import AsyncBroker
@@ -32,7 +32,7 @@ from app.interface.worker.handlers import users
 
 
 class WorkerTasks:
-    TABLE: list[Callable[..., Any]] = [
+    TABLE: ClassVar[list[Callable[..., Any]]] = [
         # ── По событию или по требованию ──────────────────────────
         users.welcome_user,
         # ── По расписанию ─────────────────────────────────────────

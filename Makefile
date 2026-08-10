@@ -28,10 +28,10 @@ lint-check: layout-check interface-check effects-check env-check query-check
 		echo "ERROR: mock/patch found in app/. Mocks belong in tests/ only."; \
 		exit 1; \
 	fi
-	@if rg -n --glob="*.py" "# noqa$$|# noqa " $(APP_DIR) $(TEST_DIR) | rg -qv "# noqa: "; then \
-		echo "ERROR: bare '# noqa' found — specify error code(s), e.g. '# noqa: E501'."; \
-		exit 1; \
-	fi
+	# Голый `# noqa` без кода ловит ruff (PGH004), а `# noqa` без ошибки под
+	# ним — RUF100. Отдельного грепа тут больше нет. Проверка выше остаётся:
+	# отключение файла ЦЕЛИКОМ (`# ruff: noqa`) ruff собственным правилом не
+	# ловит, потому что сам же этой строкой и выключается.
 
 # Раскладка кода: где что лежит и какого размера. CLAUDE.md, «Раскладка кода».
 layout-check:

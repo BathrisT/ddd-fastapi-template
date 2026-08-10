@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -50,7 +50,7 @@ class FakeUserRepo:
             stored.id = self._next_id
             self._next_id += 1
         if stored.created_at is None:
-            stored.created_at = datetime.now(tz=timezone.utc)
+            stored.created_at = datetime.now(tz=UTC)
         self.rows[stored.id] = stored
         return replace(stored)
 

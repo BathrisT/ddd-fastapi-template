@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.application.use_cases.purge_inactive_users import PurgeInactiveUsersUseCase
 from app.domain.models.user import User
@@ -9,7 +9,7 @@ async def _aged(users, days: int, *, active: bool, email: str) -> User:
     # объекта до хранилища не доезжает — ровно как с настоящей базой, где
     # изменение доменной модели без сохранения не значит ничего.
     saved = await users.save(User(id=0, email=email, name="Кто-то", is_active=active))
-    saved.created_at = datetime.now(tz=timezone.utc) - timedelta(days=days)
+    saved.created_at = datetime.now(tz=UTC) - timedelta(days=days)
     return await users.save(saved)
 
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -43,7 +43,7 @@ async def test_purge_spares_active_users(session):
     active = await repo.save(User(id=0, email="active@example.com", name="Живой", is_active=True))
     # created_at ставит база (server_default), поэтому «состарить» строки можно
     # только сдвинув границу вперёд — так же, как это увидит сценарий.
-    cutoff = datetime.now(tz=timezone.utc) + timedelta(minutes=1)
+    cutoff = datetime.now(tz=UTC) + timedelta(minutes=1)
 
     removed = await repo.delete_inactive_before(cutoff)
 

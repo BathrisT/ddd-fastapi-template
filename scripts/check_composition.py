@@ -215,6 +215,63 @@ def check_router_injection(config: dict) -> list[str]:
     return errors
 
 
+def check_no_repository_at_entry(config: dict) -> list[str]:
+    """Вход не берёт репозиторий: он зовёт сценарий.
+
+    Граница слоёв, которую `tach` провести не может. Импорт порта во входе
+    легален — вход обязан на чём-то объявлять зависимости, — и хендлер,
+    забравший данные сам и сложивший ответ, проходит все проверки: слой не
+    нарушен, маршрут объявлен, `Depends` не использован. Единственный видимый
+    статически признак — ЧТО именно он попросил у контейнера.
+
+    Отсюда же и вероятность: «добавь ручку, ей нужен материал» — самый
+    короткий путь именно этот, и он выглядит работающим.
+
+    Исключения для гейтов НЕТ, хотя соблазн есть: гейт тоже ищет по токену.
+    Но правило composition делит иначе — «проверка транспортная, резолюция
+    общая». Прочитать заголовок — работа входа и у каждого входа своя.
+    Превратить предъявленное в арендатора — общая половина: у очереди то же
+    доказательство приедет в `message.kwargs`, и резолюция, осевшая в
+    HTTP-гейте, окажется либо продублирована, либо вызвана оттуда, где нет
+    `Request`. Значит и гейт просит не репозиторий, а резолвер из
+    `application/`.
+    """
+    entry_roots = config.get("entry_roots", [])
+    suffixes = tuple(config.get("repository_suffixes", []))
+    if not entry_roots or not suffixes:
+        return []
+
+    errors: list[str] = []
+    for path in sorted(APP_DIR.rglob("*.py")):
+        if not _allowed(path, entry_roots):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+            for argument in arguments:
+                annotation = argument.annotation
+                # `FromDishka[T]` — Subscript, где срез и есть запрошенный тип
+                if not isinstance(annotation, ast.Subscript):
+                    continue
+                if getattr(annotation.value, "id", None) != "FromDishka":
+                    continue
+                requested = ast.unparse(annotation.slice)
+                if not requested.endswith(suffixes):
+                    continue
+                relative = path.relative_to(ROOT).as_posix()
+                errors.append(
+                    f"{relative}:{node.lineno}: `{node.name}` просит "
+                    f"`{requested}` — вход берёт репозиторий вместо сценария. "
+                    "Данные достаёт application: сценарий или сервис-резолвер."
+                )
+    return errors
+
+
 def main() -> int:
     config = _config()
     if not config:
@@ -224,14 +281,15 @@ def main() -> int:
         check_framework_injection(config)
         + check_router_injection(config)
         + check_no_service_locator(config)
+        + check_no_repository_at_entry(config)
     )
     if errors:
         for error in errors:
             print(error)
-        print(f"\n{len(errors)} мест, где зависимость приходит от фреймворка, а не из контейнера.")
+        print(f"\n{len(errors)} нарушений границы внедрения.")
         print("Правило — docs/правила/композиция-и-скоупы.md")
         return 1
-    print("Composition: зависимости приходят из контейнера. OK.")
+    print("Composition: зависимости приходят из контейнера, вход зовёт сценарий. OK.")
     return 0
 
 

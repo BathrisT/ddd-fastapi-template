@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
-from app.config import App, Database, LLM, Redis, Settings
+from app.config import LLM, App, Database, Redis, Settings
 
 
 @pytest.fixture(scope="session")

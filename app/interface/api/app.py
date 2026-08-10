@@ -6,9 +6,9 @@
 единственный такой в слое входа, и это видно по имени.
 """
 
-import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dishka import Provider
 from dishka.integrations.fastapi import setup_dishka
@@ -96,7 +96,7 @@ def create_app(
     # сюда попадает только заведомо публичное. Не нужны файлы вовсе — эти
     # строки удаляются вместе с `uploads_dir` в `config.py` и томом
     # `uploads_data` в compose.
-    os.makedirs(_settings.app.uploads_dir, exist_ok=True)
+    Path(_settings.app.uploads_dir).mkdir(parents=True, exist_ok=True)
     app.mount(
         "/uploads",
         StaticFiles(directory=_settings.app.uploads_dir),

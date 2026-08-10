@@ -19,7 +19,7 @@
 обнаружится он через месяц после запуска.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
@@ -33,7 +33,7 @@ class PurgeInactiveUsersUseCase:
         self._committer = committer
 
     async def execute(self, keep_days: int) -> int:
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=keep_days)
+        cutoff = datetime.now(tz=UTC) - timedelta(days=keep_days)
         removed = await self._users.delete_inactive_before(cutoff)
         await self._committer.commit()
         if removed:

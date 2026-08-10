@@ -25,7 +25,7 @@ from taskiq import InMemoryBroker
 
 from app.composition.container import AppContainer
 from app.composition.worker_tasks import WorkerTasks
-from app.config import App, Database, LLM, Redis, Settings
+from app.config import LLM, App, Database, Redis, Settings
 from app.interface.api.routes import router as api_router
 
 # Ниже этого числа проверка считается сломанной, а не «всё хорошо». Пустой
@@ -149,7 +149,7 @@ def test_collector_still_sees_the_entry_points() -> None:
 
 
 @pytest.mark.parametrize(
-    "owner,requested",
+    ("owner", "requested"),
     _REQUESTS,
     ids=lambda v: v if isinstance(v, str) else getattr(v, "__name__", str(v)),
 )
