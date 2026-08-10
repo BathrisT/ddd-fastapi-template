@@ -15,6 +15,9 @@
 make precommit        # перед коммитом: lint-check + typecheck + layers + schema-check + тесты + bandit
                       # schema-check требует Docker (сверяет ORM с миграциями)
 make check            # быстрая проверка: lint-check + typecheck + layers + unit-тесты
+make effects-check    # порядок операций: публикация после фиксации, работа с возвращённым
+make env-check        # каждое поле Settings описано в .env.example
+make query-check      # N+1: чтение из репозитория внутри цикла
 make layout-check     # раскладка кода: где что лежит и какого размера
 make interface-check  # слой входа: что в routes/, откуда зависимости
 make lint             # ruff check --fix + format
@@ -270,6 +273,7 @@ Infrastructure реализует порты из application.
 | `mock`/`MagicMock` в `app/` | grep в `make lint-check` |
 | SQL-строки с f-string/конкатенацией | `S608` |
 | наивный `datetime` | `DTZ` |
+| `import logging` (кроме `app/logging.py`) | `TID251` |
 
 ---
 
@@ -284,7 +288,9 @@ Infrastructure реализует порты из application.
 - **Дальше работают с ВОЗВРАЩЁННЫМ объектом**, а не с переданным: идентификатор
   присваивает база, и у аргумента он так и остаётся нулевым. Событие или задача
   с `id=0` не падает на месте — она уходит в никуда, а обработчик пишет
-  «сущности 0 больше нет».
+  «сущности 0 больше нет». Проверяется `scripts/check_effects.py`: ловится
+  чтение `id` у сущности, заведённой здесь же и сохранённой без присваивания
+  результата.
 
 ---
 
@@ -324,6 +330,14 @@ Infrastructure реализует порты из application.
   по сервисам и сценариям.
   Списки исключений — `[tool.db_access]`, проверяется
   `scripts/check_db_access.py` (в `make interface-check`).
+- **Чтение из репозитория внутри цикла — это N+1 запросов**, и сторож
+  различает два класса роста, а не запрещает форму: цикл во вложенном цикле по
+  безграничному источнику (результату другого чтения) — отказ, рост
+  квадратичный; просто безграничный — предупреждение, потому что редкая
+  административная операция того стоит, а решает это автор. Цикл по атрибуту
+  одной загруженной сущности не считается вовсе. Проверяется
+  `scripts/check_n_plus_one.py` (`make query-check`), исключения —
+  `[tool.query_loops]`.
 
 ---
 
@@ -342,8 +356,11 @@ Use case → event: DomainEvent
 - **Публиковать только ПОСЛЕ `commit()`.** Воркер разбирает очередь мгновенно
   и своей сессией: опубликованное до фиксации читает базу раньше, чем в ней
   появится строка.
+  Проверяется `scripts/check_effects.py` (`make effects-check`) — тесты это не
+  ловят: `NoopEventPublisher` задач не создаёт.
 - Аргументы задачи — только именованные: провайдер арендатора очереди читает
-  `message.kwargs`.
+  `message.kwargs`. Держит это сигнатура порта `TaskQueue.enqueue(task_name,
+  **kwargs)`, отдельной проверки нет и не нужно.
 - В тестах использовать `NoopEventPublisher` (не создаёт задач Taskiq).
 
 ---
@@ -366,6 +383,12 @@ Use case → event: DomainEvent
 Все настройки через env с вложением `APP__ENV`, `DATABASE__HOST` и т.д.
 Окружения: `development` | `production`.
 
+**Каждое поле `Settings` описано в `.env.example`** — он документирует конфиг
+целиком, а не только обязательное. Ручка, которой там нет, невидима всем, кто
+не открывал `config.py`. Проверяется `scripts/check_env_example.py`
+(`make env-check`): у автора правки значение уже лежит в `.env`, и расхождение
+он увидит не раньше, чем оно сломает старт у того, кто склонировал репозиторий.
+
 В тестах settings создаётся напрямую:
 ```python
 Settings(app=App(...), database=Database(host=..., port=...), llm=LLM(api_key="test-key"))
@@ -375,7 +398,9 @@ Settings(app=App(...), database=Database(host=..., port=...), llm=LLM(api_key="t
 
 ## Логирование
 
-`loguru`. Импортировать `from loguru import logger`. Стандартный `logging` не использовать.
+`loguru`. Импортировать `from loguru import logger`. Стандартный `logging`
+запрещён правилом `TID251`; исключение одно — `app/logging.py`, который его
+перехватывает и уводит в loguru.
 
 ---
 

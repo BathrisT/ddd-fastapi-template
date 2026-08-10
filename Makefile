@@ -9,13 +9,13 @@ endif
 APP_DIR = ./app
 TEST_DIR = ./tests
 
-.PHONY: lint lint-check layout-check interface-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit review-pack migrate install infra-up infra-down api worker scheduler
+.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit review-pack migrate install infra-up infra-down api worker scheduler
 
 lint:
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) --fix $(ARGS)
 	poetry run ruff format $(APP_DIR) $(TEST_DIR) $(ARGS)
 
-lint-check: layout-check interface-check
+lint-check: layout-check interface-check effects-check env-check query-check
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) $(ARGS)
 	poetry run ruff format $(APP_DIR) $(TEST_DIR) --check $(ARGS)
 	@for f in $$(rg -l --glob="*.py" "# ruff: noqa" $(APP_DIR)); do \
@@ -52,6 +52,25 @@ interface-check:
 	poetry run python scripts/check_composition.py
 	poetry run python scripts/check_entrypoint_registry.py
 	poetry run python scripts/check_db_access.py
+
+# Порядок операций в пути записи: публикация после фиксации и работа с
+# возвращённым из репозитория объектом. Единственная проверка не про форму
+# кода, а про последовательность — и единственный класс ошибок, который тесты
+# не ловят по конструкции (NoopEventPublisher задач не создаёт).
+effects-check:
+	poetry run python scripts/check_effects.py
+
+# Конфиг: каждое поле Settings описано в .env.example. Расхождение не даёт ни
+# красного теста, ни отказа линтера — оно даёт падение при старте у того, кто
+# склонировал репозиторий, тогда как у автора правки значение уже лежит в .env.
+env-check:
+	poetry run python scripts/check_env_example.py
+
+# Стоимость чтения: N+1 запросов. Отказ только на квадратичном росте (чтение
+# во вложенном цикле по безграничному источнику); линейный рост — предупреждение,
+# потому что бывает уместен, а решает это автор, а не сторож.
+query-check:
+	poetry run python scripts/check_n_plus_one.py
 
 typecheck:
 	poetry run mypy $(APP_DIR) $(ARGS)
