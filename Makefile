@@ -68,13 +68,17 @@ layers-report:
 schema-check:
 	poetry run python scripts/check_schema_consistency.py
 
-# Порог гейтит ТОЛЬКО полный прогон (unit+integration): `test-unit` в одиночку
-# меряется против всего app/, включая слой входа, который покрывается
-# интеграционными тестами, — его сырой процент структурно занижен и
-# регрессию не показывает. Число поднимают, когда покрытие реально выросло,
-# и никогда — чтобы разблокировать красный прогон.
+# Покрытие гейтит ТОЛЬКО полный прогон (unit+integration): `test-unit` в
+# одиночку меряется против всего app/, включая слой входа, который покрывается
+# интеграционными тестами, — его сырой процент структурно занижен и регрессию
+# не показывает.
+#
+# Постоянного порога нет: достигнутое лежит в `.coverage-baseline`, и сторож
+# сам поднимает планку, когда покрытие выросло. Опускать её умеет только
+# человек — правкой файла, видимой в диффе.
 test:
-	poetry run pytest $(TEST_DIR) -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered --cov-fail-under=80 -q $(ARGS)
+	poetry run pytest $(TEST_DIR) -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered -q $(ARGS)
+	poetry run python scripts/check_coverage.py
 
 test-unit:
 	poetry run pytest tests/unit -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered -q $(ARGS)
