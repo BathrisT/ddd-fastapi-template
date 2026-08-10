@@ -36,8 +36,15 @@ _LOCK_KEY = "lock:purge_inactive_users"
 _LOCK_TTL_S = 50 * 60
 
 
-async def welcome_user(user_id: int, use_case: FromDishka[WelcomeUserUseCase]) -> None:
-    await use_case.execute(user_id)
+async def welcome_user(user_id: int, use_case: FromDishka[WelcomeUserUseCase]) -> dict[str, object]:
+    """Возвращает исход — его читает тот, кто опрашивает `/jobs/{id}`.
+
+    Обработчик, возвращающий `None`, делает опрос бессмысленным: очередь
+    отмечает успехом и «сделал», и «этим занят другой», и «пользователя
+    больше нет». Различает их только то, что вернул сценарий.
+    """
+    outcome = await use_case.execute(user_id)
+    return {"status": outcome.status, "message": outcome.message}
 
 
 async def purge_inactive_users(

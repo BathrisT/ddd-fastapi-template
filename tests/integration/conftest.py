@@ -35,6 +35,9 @@ def test_settings(postgres: PostgresContainer) -> Settings:
             api_base_url="http://localhost:8000",
             frontend_base_url="http://localhost:5173",
             fernet_key="dGVzdC1mZXJuZXQta2V5LTMyLWJ5dGVzLWxvbmchISE=",
+            # Непустой намеренно: с пустым ключом верификатор пропускает
+            # всех, и тест на отказ проверял бы отсутствие проверки.
+            api_key="test-api-key",
         ),
         database=Database(
             host=postgres.get_container_host_ip(),

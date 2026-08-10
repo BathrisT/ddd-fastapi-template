@@ -11,8 +11,10 @@
 from fastapi import APIRouter
 
 from app.interface.api.routes.health import router as health_router
+from app.interface.api.routes.jobs import router as jobs_router
 from app.interface.api.routes.users import router as users_router
 
 router = APIRouter()
 router.include_router(health_router)
+router.include_router(jobs_router)
 router.include_router(users_router)

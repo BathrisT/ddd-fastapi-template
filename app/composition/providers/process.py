@@ -26,9 +26,12 @@ from sqlalchemy.ext.asyncio import (
 
 from app.application.ports.key_guard import KeyGuard
 from app.application.ports.services.ai_service import AiService
+from app.application.ports.welcome_journal import WelcomeJournal
+from app.application.services.caller_resolver import CallerResolver
 from app.config import Settings
 from app.infrastructure.crypto.token_cipher import TokenCipher
 from app.infrastructure.db.autonomous_session import AutonomousSession
+from app.infrastructure.db.repositories.welcome_journal import SqlWelcomeJournal
 from app.infrastructure.redis.key_guard import RedisKeyGuard
 from app.infrastructure.services.openai_service import OpenAiService
 
@@ -100,6 +103,14 @@ class ProcessProvider(Provider):
         client: Redis = Redis.from_url(settings.redis.url, decode_responses=True)
         yield client
         await client.aclose()
+
+    # Журнал процессный, а не привходовой: своя короткая транзакция на
+    # своём engine, от сессии сценария не зависит вовсе.
+    journal = provide(SqlWelcomeJournal, provides=WelcomeJournal)
+
+    @provide
+    def caller_resolver(self, settings: Settings) -> CallerResolver:
+        return CallerResolver(settings.app.api_key)
 
     @provide
     def cipher(self, settings: Settings) -> TokenCipher:

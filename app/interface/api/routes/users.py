@@ -6,6 +6,9 @@ from fastapi import APIRouter, Query
 
 from app.application.use_cases.list_users import ListUsersUseCase
 from app.application.use_cases.register_user import RegisterUserCommand, RegisterUserUseCase
+from app.application.use_cases.request_welcome import RequestWelcomeUseCase
+from app.interface.api.guards.api_key import CallerDep
+from app.interface.api.schemas.job import JobAccepted
 from app.interface.api.schemas.user import UserCreate, UserResponse
 
 # route_class обязателен на ЛИСТОВОМ роутере: без него `FromDishka` в хендлере
@@ -34,3 +37,19 @@ async def list_users(
 ) -> list[UserResponse]:
     users = await use_case.execute(limit)
     return [UserResponse.model_validate(user) for user in users]
+
+
+@router.post("/{user_id}/welcome", status_code=202)
+async def request_welcome(
+    user_id: int,
+    _: CallerDep,
+    use_case: FromDishka[RequestWelcomeUseCase],
+) -> JobAccepted:
+    """202, а не 201: ресурс не создан, работа только принята.
+
+    Ответ несёт идентификатор задачи — по нему клиент опрашивает `/jobs/{id}`,
+    пока крутится прогресс. Это единственный вид задачи, у которой исход ждут;
+    приветствие после регистрации ставится событием, и его никто не опрашивает.
+    """
+    job_id = await use_case.execute(user_id)
+    return JobAccepted(job_id=job_id)

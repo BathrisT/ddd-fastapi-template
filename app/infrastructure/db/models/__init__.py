@@ -9,5 +9,6 @@
 
 from app.infrastructure.db.models.base import Base, CreatedAtMixin, TimestampMixin
 from app.infrastructure.db.models.user import UserORM
+from app.infrastructure.db.models.welcome_attempt import WelcomeAttemptORM
 
-__all__ = ["Base", "CreatedAtMixin", "TimestampMixin", "UserORM"]
+__all__ = ["Base", "CreatedAtMixin", "TimestampMixin", "UserORM", "WelcomeAttemptORM"]

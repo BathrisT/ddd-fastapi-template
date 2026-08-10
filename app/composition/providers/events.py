@@ -18,7 +18,9 @@ from taskiq import AsyncBroker
 from app.application.ports.event_publisher import EventPublisher
 from app.application.ports.job_results import JobResults
 from app.application.ports.task_queue import TaskQueue
+from app.application.ports.task_submitter import TaskSubmitter
 from app.composition.event_router import EventRouter
+from app.composition.task_router import TaskRouter
 from app.infrastructure.worker.task_queue import TaskiqTaskQueue
 
 
@@ -29,6 +31,7 @@ class EventProvider(Provider):
 
     taskiq_queue = provide(TaskiqTaskQueue)
     router = provide(EventRouter, provides=EventPublisher)
+    tasks = provide(TaskRouter, provides=TaskSubmitter)
 
     # Два порта, один объект: ставит задачи и читает их результат один и тот же
     # клиент брокера. Псевдонимы, а не вторая сборка.

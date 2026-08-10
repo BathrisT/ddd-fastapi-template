@@ -34,6 +34,12 @@ class App(BaseModel):
     # Fernet key for encrypting sensitive fields at rest (tokens, API keys).
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     fernet_key: str
+    # Ключ доступа к API, заголовок `X-Api-Key`. Пусто — вход не проверяется
+    # вовсе: шаблон обязан подниматься из коробки, а ключ, придуманный за
+    # пользователя, всё равно был бы известен всем. В проде пустое значение
+    # означает открытые ручки, и верификатор говорит об этом в логе на каждом
+    # отказе — молча пропускать он не имеет права.
+    api_key: str = ""
     # Directory for uploaded files. Override via APP__UPLOADS_DIR env var.
     uploads_dir: str = "uploads"
 

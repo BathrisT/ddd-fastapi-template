@@ -15,6 +15,7 @@ from dishka import Provider, Scope, provide
 from app.application.use_cases.list_users import ListUsersUseCase
 from app.application.use_cases.purge_inactive_users import PurgeInactiveUsersUseCase
 from app.application.use_cases.register_user import RegisterUserUseCase
+from app.application.use_cases.request_welcome import RequestWelcomeUseCase
 from app.application.use_cases.welcome_user import WelcomeUserUseCase
 
 
@@ -23,5 +24,6 @@ class UseCaseProvider(Provider):
 
     register_user = provide(RegisterUserUseCase)
     list_users = provide(ListUsersUseCase)
+    request_welcome = provide(RequestWelcomeUseCase)
     welcome_user = provide(WelcomeUserUseCase)
     purge_inactive_users = provide(PurgeInactiveUsersUseCase)
