@@ -45,7 +45,7 @@ layout-check:
 # Границы: что имеет право лежать в routes/, откуда хендлер берёт зависимости,
 # не потерялся ли вход по дороге и кто разговаривает с базой. Вход здесь —
 # любой протокол, не только HTTP: обработчик очереди тоже вход.
-# Правило: docs/правила/композиция-и-скоупы.md
+# Правило: docs/rules/композиция-и-скоупы.md
 interface-check:
 	poetry run python scripts/check_fastapi_routes.py
 	poetry run python scripts/check_package_coverage.py
