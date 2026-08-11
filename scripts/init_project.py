@@ -122,7 +122,7 @@ def rename_pyproject(old: str, new: str) -> bool:
             continue
         start, end = found.span(1)
         body = found.group(1).replace(target, f'name = "{new}"', 1)
-        PYPROJECT.write_text(text[:start] + body + text[end:], encoding="utf-8")
+        PYPROJECT.write_text(text[:start] + body + text[end:], encoding="utf-8", newline="")
         return True
     return False
 
@@ -134,7 +134,11 @@ def rename_readme(old: str, new: str) -> bool:
     if not lines or lines[0].strip() != f"# {old}":
         return False
     lines[0] = lines[0].replace(f"# {old}", f"# {new}", 1)
-    README.write_text("".join(lines), encoding="utf-8")
+    # `newline=""` — иначе на Windows перевод строки при записи станет CRLF,
+    # и первый же `git diff` после `make init` покажет файл изменённым целиком
+    # вместо одной строки заголовка. Ровно то, что человеку велено просмотреть
+    # перед коммитом.
+    README.write_text("".join(lines), encoding="utf-8", newline="")
     return True
 
 

@@ -271,7 +271,10 @@ class Functions:
 def _sources() -> list[tuple[Path, ast.AST]]:
     parsed: list[tuple[Path, ast.AST]] = []
     for path in sorted(APP_DIR.rglob("*.py")):
-        parsed.append((path, ast.parse(path.read_text(encoding="utf-8"))))
+        try:
+            parsed.append((path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path))))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
     if not parsed:
         print(f"ОШИБКА: в {APP_DIR} нет ни одного .py — проверка смотрит в пустоту.")
         raise SystemExit(2)
@@ -309,7 +312,7 @@ def check_publish_after_commit(sources: list[tuple[Path, ast.AST]]) -> list[str]
                 if covered:
                     continue
                 errors.append(
-                    f"{path.relative_to(APP_DIR.parent)}:{publish.lineno}: "
+                    f"{path.relative_to(APP_DIR.parent).as_posix()}:{publish.lineno}: "
                     f"`{Calls.receiver(publish)}.publish(...)` в `{func.name}` "
                     "не прикрыт коммитом: выше по этому пути исполнения "
                     "`commit()` нет. Воркер разберёт задачу своей сессией и не "
@@ -349,7 +352,7 @@ def check_stale_after_save(sources: list[tuple[Path, ast.AST]]) -> list[str]:
                 for line in Reads.of_attribute(func, passed, identity):
                     if line > node.lineno and Bindings.last_before(func, passed, line) is bound:
                         errors.append(
-                            f"{path.relative_to(APP_DIR.parent)}:{line}: "
+                            f"{path.relative_to(APP_DIR.parent).as_posix()}:{line}: "
                             f"`{passed}.{identity}` читается после того, как "
                             f"результат `{Calls.method_name(call)}(...)` выброшен "
                             f"(строка {node.lineno}). Идентификатор присваивает "

@@ -25,13 +25,13 @@ make lint             # ruff check --fix + format
 make typecheck        # mypy
 make layers           # tach check — проверка зависимостей между слоями DDD
 make layers-show      # tach show --web — граф зависимостей в браузере
-make layers-report    # tach report <module> — детали по конкретному модулю
+make layers-report ARGS=app/domain   # tach report — детали по каталогу
+                      # именно `ARGS=` и именно ПУТЬ: без `ARGS=` make примет
+                      # аргумент за вторую цель, а `tach report` берёт путь, а
+                      # не имя модуля (`app/domain`, не `app.domain`)
 make test             # все тесты с coverage
 make test-unit        # unit-тесты (параллельно, без Docker)
 make test-integration # integration-тесты (поднимает PostgreSQL через testcontainers)
-make migrate          # alembic upgrade head
-make infra-up         # локальные postgres + redis в docker
-make api / worker / scheduler   # запуск точки входа с хоста
 
 # Шаблон — docs/rules/шаблон-и-обновления.md:
 make init NAME=x      # отвязать склонированный шаблон от шаблона (коммит не делает)

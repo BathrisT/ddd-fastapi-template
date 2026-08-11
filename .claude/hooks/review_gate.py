@@ -95,8 +95,37 @@ SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 # string or a chain operator), tolerating a handful of leading global flags
 # like `-C <path>`. Deliberately conservative — false negatives just mean the
 # gate doesn't fire; false positives just mean an extra unnecessary review.
+#
+# `git` тут — не обязательно голое слово: на Windows пишут `git.exe`, а
+# описание PowerShell-инструмента прямо учит звать нативные exe через
+# `& "C:/.../git.exe"`. Разделителем перед командой считается ещё и `(`, `{`,
+# `&` — формы `(git commit ...)`, `if (...) { git commit ... }` встречаются в
+# том же PowerShell. Ложное срабатывание стоит одного лишнего ревью, ложный
+# пропуск — фичи, уехавшей в master без единой линзы; такое в истории этого
+# файла уже было, ровно на этой ОС.
+#
+# Собирается из кусков, потому что то же самое нужно `STAGING_RE`, а
+# разошедшиеся регулярки — это дыра, которую не видно ни одной из них.
+#
+# Запускаторы перечислены поимённо, а не «любое слово перед git»: последнее
+# ловило бы и `echo "git commit"` в тексте скрипта, а отказ на безобидной
+# команде стоит девяти линз. Список может устареть, но устаревает он в сторону
+# уже известную и видимую в ревью.
+_LAUNCHER = r"(?:(?:poetry|pdm|uv|pipenv|hatch|rye|npx|pnpm|yarn|bun|sudo|env|nice|time)\s+(?:run\s+|exec\s+)?)*"
+# `git`, `git.exe`, `/usr/bin/git`, `"C:/Program Files/Git/bin/git.exe"` —
+# путь может быть в кавычках и с пробелами, поэтому внутри кавычек пробел
+# разрешён, а снаружи нет.
+_GIT = r"(?:\"[^\"]*[/\\]git(?:\.exe)?\"|'[^']*[/\\]git(?:\.exe)?'|(?:\S*[/\\])?git(?:\.exe)?)"
+# Начало строки или граница команды. `(`, `{` и `&` — формы PowerShell:
+# `(git commit ...)`, `if (...) { git commit ... }`, `& "путь\git.exe" ...`.
+_BOUNDARY = r"(?:^|[;&|(){}]|\n)\s*(?:&\s*)?"
+_FLAGS = r"(?:-[A-Za-z-]+(?:[= ]\S+)?\s+)*"
+
 COMMIT_RE = re.compile(
-    r"(?:^|[;&|]|\n)\s*(?:\S+=\S+\s+)*git\s+(?:-[A-Za-z-]+(?:[= ]\S+)?\s+)*commit\b"
+    # `commit(?![-\w])`, а не `commit\b`: граница слова стоит и перед дефисом,
+    # поэтому `\b` ловил бы `git commit-graph write` — команду, которая ничего
+    # не коммитит.
+    rf"{_BOUNDARY}{_LAUNCHER}(?:\S+=\S+\s+)*{_GIT}\s+{_FLAGS}commit(?![-\w])"
 )
 
 # Staging chained into the same shell call as the commit (`git add -A && git
@@ -110,7 +139,9 @@ COMMIT_RE = re.compile(
 # `git commit -a` is NOT this hole and deliberately isn't matched: it stages
 # only already-tracked modifications, which `git diff HEAD` shows regardless of
 # whether they're staged.
-STAGING_RE = re.compile(r"(?:^|[;&|]|\n)\s*(?:\S+=\S+\s+)*git\s+(?:-[A-Za-z-]+(?:[= ]\S+)?\s+)*(?:add|stage)\b")
+STAGING_RE = re.compile(
+    rf"{_BOUNDARY}{_LAUNCHER}(?:\S+=\S+\s+)*{_GIT}\s+{_FLAGS}(?:add|stage)(?![-\w])"
+)
 
 # This repo's convention: no AI co-authorship trailers in commit messages.
 # Checked unconditionally — unlike the semantic review gate below, this is a
@@ -326,7 +357,12 @@ if __name__ == "__main__":
     # не пройдя ревью. Добавляете новый инструмент, умеющий выполнять команды, —
     # добавьте его и сюда, и в matcher в .claude/settings.json.
     try:
-        _payload = json.load(sys.stdin)
+        # Читаем БАЙТЫ и декодируем UTF-8 сами: протокол хуков — UTF-8, а
+        # `json.load(sys.stdin)` берёт кодировку локали. На Windows это cp1251,
+        # и путь проекта с кириллицей (`C:\Users\Иван\...`) приезжает битым —
+        # либо `git -C <мусор>` на каждом коммите, либо исключение, которое
+        # ловит `except Exception` ниже и МОЛЧА разрешает коммит.
+        _payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
         if _payload.get("tool_name") not in SHELL_TOOLS:
             sys.exit(0)
         _command = _payload.get("tool_input", {}).get("command", "")

@@ -63,6 +63,26 @@ def raw(*args: str) -> str:
     return git(*args).stdout.rstrip("\n")
 
 
+def must(*args: str) -> str:
+    """Вывод команды, от которой зависит РЕШЕНИЕ. Отказ git — громкий.
+
+    `out()` код возврата выбрасывает, и для отчётов это нормально: не вышло
+    посчитать расхождение — покажем ноль. Но там, где ответом распоряжаются,
+    молчание опаснее ошибки: упавший `git status` прочитался бы как «дерево
+    чистое» и пустил бы слияние поверх незакоммиченного, а упавший `git log` —
+    как «шаблон не ушёл вперёд», и обновление молча не состоялось бы.
+    """
+    result = git(*args)
+    if result.returncode != 0:
+        print(
+            f"ОТКАЗ: `git {' '.join(args)}` завершилась с кодом {result.returncode}.\n\n"
+            f"{result.stderr.strip() or result.stdout.strip()}\n\n"
+            f"Подробно: {RULE}"
+        )
+        sys.exit(1)
+    return result.stdout.strip()
+
+
 def git_version() -> tuple:
     match = re.search(r"(\d+)\.(\d+)", out("--version"))
     return (int(match.group(1)), int(match.group(2))) if match else (0, 0)
@@ -119,8 +139,11 @@ class Report:
 
     @staticmethod
     def block(title: str, body: str) -> None:
-        line = "─" * max(4, 60 - len(title))
-        print(f"\n── {title} {line}")
+        # ASCII, а не рамки Unicode: `U+2500` нет в cp1251, и отчёт ронял бы
+        # команду на Windows-консоли ровно тогда, когда ему есть что показать —
+        # при пустой дельте до рамок дело не доходит, и падение не всплывало.
+        line = "-" * max(4, 60 - len(title))
+        print(f"\n-- {title} {line}")
         if not body.strip():
             print("  (пусто)")
             return
@@ -160,7 +183,7 @@ class Sync:
         self.template = template
 
     def incoming(self) -> list:
-        log = out("log", "--oneline", "--no-decorate", "HEAD..FETCH_HEAD")
+        log = must("log", "--oneline", "--no-decorate", "HEAD..FETCH_HEAD")
         return log.splitlines() if log else []
 
     def dirty(self) -> bool:
@@ -173,7 +196,7 @@ class Sync:
         Случай, когда слияние собирается затереть неотслеживаемый файл, ловит
         сам git и говорит об этом прямо — этот отказ пересказан ниже.
         """
-        return bool(out("status", "--porcelain", "--untracked-files=no"))
+        return bool(must("status", "--porcelain", "--untracked-files=no"))
 
     def report_alerting(self, paths: list) -> None:
         """Файлы, опасные фактом появления. Молчит, если таких нет."""
@@ -245,7 +268,7 @@ class Sync:
             )
 
         alerting = self.template.alerting(out("diff", "--name-only", "HEAD...FETCH_HEAD").splitlines())
-        base = out("rev-parse", "--abbrev-ref", "HEAD")
+        base = must("rev-parse", "--abbrev-ref", "HEAD")
         created = git("switch", "-c", BUFFER_BRANCH)
         if created.returncode != 0:
             return fail(f"не удалось завести ветку-буфер:\n{created.stderr.strip()}")

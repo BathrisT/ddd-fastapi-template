@@ -168,9 +168,16 @@ class Constructor:
                 continue
             if item.name != "__init__":
                 continue
+            # Все три вида параметров, а не только позиционные: конструктор
+            # `def __init__(self, *, users_repo: UserRepo)` — обычная форма, и
+            # с одними `args` роль хранилища у него не видна вовсе, то есть
+            # квадратичное чтение в цикле не считается. Сосед по правилу
+            # (`check_db_access`) собирает все три.
             declared = {
                 argument.arg: ast.unparse(argument.annotation)
-                for argument in item.args.args
+                for argument in (
+                    *item.args.posonlyargs, *item.args.args, *item.args.kwonlyargs
+                )
                 if argument.annotation is not None
             }
             found: dict[str, str] = {}
@@ -289,7 +296,7 @@ class Finder(ast.NodeVisitor):
         nested = growing >= 2
 
         where = (
-            f"{self.path.relative_to(APP_DIR.parent)}:{call.lineno}: "
+            f"{self.path.relative_to(APP_DIR.parent).as_posix()}:{call.lineno}: "
             f"{Call.receiver(call)}.{Call.method(call)}(...) в цикле"
         )
         if nested:
@@ -311,7 +318,13 @@ def main() -> int:
         if any(fnmatch(relative, pattern) for pattern in excluded):
             continue
         finder = Finder(path)
-        finder.visit(ast.parse(path.read_text(encoding="utf-8")))
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (SyntaxError, UnicodeDecodeError):
+            # Про синтаксис и кодировку ругается ruff; сторожу тут сказать
+            # нечего, а трейсбек без имени файла — худшее из сообщений.
+            continue
+        finder.visit(tree)
         red.extend(finder.red)
         yellow.extend(finder.yellow)
 

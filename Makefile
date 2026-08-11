@@ -2,14 +2,30 @@
 # to cmd.exe, which can't parse them ("f was unexpected at this time"). Point it at
 # Git Bash instead. On Linux/CI the default /bin/sh handles the POSIX recipes fine.
 ifeq ($(OS),Windows_NT)
-SHELL := C:/Program Files/Git/usr/bin/bash.exe
+# Путь к Git Bash. Автопоиска нет и быть не может: списки make разделяются
+# пробелами, и путь с пробелом словом не бывает — `$(wildcard C:/Program?Files/
+# .../bash.exe)` шаблон-то раскрывает, но результат тут же режется по пробелу и
+# от него остаётся `C:/Program`. Поэтому одно прямое присваивание (его make не
+# режет) и возможность переопределить.
+#
+# Git стоит не здесь? Передай свой путь:
+#   make GIT_BASH="C:/Users/.../AppData/Local/Programs/Git/usr/bin/bash.exe" check
+# либо задай GIT_BASH один раз в переменных окружения.
+# Где обычно: winget и scoop кладут в %LOCALAPPDATA%/Programs/Git, старые
+# сборки — в "C:/Program Files (x86)/Git", MSYS2 — в C:/msys64.
+#
+# Промах пути make не назовёт: он молча возьмёт `sh.exe` из PATH, а из
+# PowerShell, где каталога Git в PATH нет, доедет до cmd.exe и упадёт на
+# «f was unexpected at this time» — про шелл в этом сообщении ни слова.
+GIT_BASH ?= C:/Program Files/Git/usr/bin/bash.exe
+SHELL := $(GIT_BASH)
 .SHELLFLAGS := -c
 endif
 
 APP_DIR = ./app
 TEST_DIR = ./tests
 
-.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check migrations-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit review-pack migrate install infra-up infra-down api worker scheduler init template-diff template-update template-graft
+.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check migrations-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit review-pack install init template-diff template-update template-graft
 
 lint:
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) --fix $(ARGS)
@@ -19,20 +35,11 @@ lint-check: layout-check interface-check effects-check env-check query-check mig
 	poetry run python scripts/check_not_initialised.py
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) $(ARGS)
 	poetry run ruff format $(APP_DIR) $(TEST_DIR) --check $(ARGS)
-	@for f in $$(rg -l --glob="*.py" "# ruff: noqa" $(APP_DIR)); do \
-		if ! rg -q "# allow-ruff-noqa:" $$f; then \
-			echo "ERROR: $$f disables ruff for entire file. Add '# allow-ruff-noqa: <reason>' in the file."; \
-			exit 1; \
-		fi; \
-	done
-	@if rg -n --glob="*.py" "MagicMock|mock\.patch|unittest\.mock" $(APP_DIR) | rg -qv "^[^:]+:[^:]+:.*#.*allow-mock:"; then \
-		echo "ERROR: mock/patch found in app/. Mocks belong in tests/ only."; \
-		exit 1; \
-	fi
-	# Голый `# noqa` без кода ловит ruff (PGH004), а `# noqa` без ошибки под
-	# ним — RUF100. Отдельного грепа тут больше нет. Проверка выше остаётся:
-	# отключение файла ЦЕЛИКОМ (`# ruff: noqa`) ruff собственным правилом не
-	# ловит, потому что сам же этой строкой и выключается.
+	poetry run python scripts/check_escape_hatches.py
+# Пометки-побеги (`# ruff: noqa` на весь файл, мок вместо дублёра) проверяет
+# скрипт, а не конвейер `rg`: ripgrep не предустановлен ни на одной ОС, и без
+# него ОБЕ строки завершались нулём — сторож против молчаливого обхода правил
+# сам молчаливо обходился. `grep` не спасает: в Windows его тоже нет.
 
 # Раскладка кода: где что лежит и какого размера. CLAUDE.md, «Раскладка кода».
 layout-check:
@@ -89,6 +96,8 @@ layers:
 layers-show:
 	poetry run tach show --web $(ARGS)
 
+# Аргумент передаётся через `ARGS=` (иначе make примет его за вторую цель) и
+# является ПУТЁМ, а не именем модуля: `make layers-report ARGS=app/domain`.
 layers-report:
 	poetry run tach report $(ARGS)
 
@@ -108,10 +117,10 @@ test:
 	poetry run python scripts/check_coverage.py
 
 test-unit:
-	poetry run pytest tests/unit -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered -q $(ARGS)
+	poetry run pytest $(TEST_DIR)/unit -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered -q $(ARGS)
 
 test-integration:
-	poetry run pytest tests/integration -n auto -q $(ARGS)
+	poetry run pytest $(TEST_DIR)/integration -n auto -q $(ARGS)
 
 bandit:
 	poetry run bandit -r $(APP_DIR) -q -c pyproject.toml $(ARGS)
@@ -125,9 +134,6 @@ precommit: lint-check typecheck layers schema-check test bandit
 # каждым раундом ревью — дерево изменилось, значит пакеты устарели.
 review-pack:
 	poetry run python .claude/hooks/build_pack.py .
-
-migrate:
-	poetry run alembic upgrade head
 
 # ─── Шаблон ──────────────────────────────────────────────────────────────────
 # Правило целиком: docs/rules/шаблон-и-обновления.md
@@ -173,46 +179,3 @@ template-graft:
 install:
 	poetry install
 	poetry run pre-commit install
-
-# ─── Local dev ───────────────────────────────────────────────────────────────
-
-infra-up:
-	docker compose -f docker-compose.local.yml up -d
-
-infra-down:
-	docker compose -f docker-compose.local.yml down
-
-API_PORT = 8000
-
-# Добивание прошлого процесса перед запуском — Windows-специфика: перезапуск на
-# рабочей машине делают этими же целями, и оставшийся слушатель порта даёт
-# «address already in use». На остальных ОС строки обязаны исчезнуть, а не
-# просто не падать: префикс `-` глушит КОД ВОЗВРАТА, но `powershell: command not
-# found` всё равно печатается, а без него make останавливает цель — и `make api`
-# из README на Linux не доходит до запуска вовсе, сообщая при этом про
-# powershell, а не про причину. `:` — встроенный no-op шелла, съедающий свои
-# аргументы вместе с кавычками.
-ifeq ($(OS),Windows_NT)
-WIN_ONLY =
-else
-WIN_ONLY = :
-endif
-
-api:
-	-$(WIN_ONLY) powershell -Command "Get-NetTCPConnection -LocalPort $(API_PORT) -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $$_.OwningProcess -Force -ErrorAction SilentlyContinue }"
-	$(WIN_ONLY) powershell -Command "Start-Sleep -Seconds 1"
-	poetry run python -m app.entrypoint_api
-
-# `--max-async-tasks` тот же, что в docker-compose.yml, и по той же причине:
-# дефолт 100 против пула БД в 10+5 означает, что 85 задач ждут pool_timeout и
-# падают, а ретраев в брокере нет намеренно. Локальный запуск берёт пул из того
-# же `.env`, так что расходиться этим двум командам не с чего.
-worker:
-	-$(WIN_ONLY) powershell -Command "Get-WmiObject Win32_Process -Filter \"name='python.exe'\" | Where-Object { $$_.CommandLine -like '*entrypoint_worker*' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"
-	$(WIN_ONLY) powershell -Command "Start-Sleep -Seconds 1"
-	poetry run taskiq worker app.entrypoint_worker:broker --max-async-tasks 10
-
-scheduler:
-	-$(WIN_ONLY) powershell -Command "Get-WmiObject Win32_Process -Filter \"name='python.exe'\" | Where-Object { $$_.CommandLine -like '*scheduler*' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"
-	$(WIN_ONLY) powershell -Command "Start-Sleep -Seconds 1"
-	poetry run taskiq scheduler app.entrypoint_scheduler:scheduler

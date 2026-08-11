@@ -23,6 +23,19 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 _DEFAULT_SOURCE_ROOT = "app"
 
+# Windows-консоль по умолчанию отдаёт Python кодировку под локаль (здесь
+# cp1251), и один символ вне неё — стрелка, тире, рамка — роняет сторожа
+# `UnicodeEncodeError` посреди печати отчёта. Отказ при этом выглядит как
+# падение проверки, хотя проверка прошла: ломается вывод, а не правило.
+#
+# Кодировку не подменяем (иначе кириллица приедет мохнатой), меняем только
+# реакцию на непредставимый символ: он станет `?`, а не концом процесса.
+# Ставится здесь, потому что этот модуль импортируют все сторожа, — то есть
+# защита появляется у нового скрипта сама, без строки-напоминания в нём.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="replace")
+
 
 def pyproject() -> dict:
     """Весь pyproject.toml разобранным."""
@@ -80,8 +93,15 @@ def require_dir(path: Path, setting: str) -> Path:
 # попросивший `FromDishka[UserRepo | None]`, проходил бы мимо проверки молча.
 # Запрет одной лишь строчной буквы отсекает `Report` (ради чего граница и
 # нужна) и пропускает любой разделитель, какой встретится в аннотации.
-_REPOSITORY_NAME = re.compile(r"(?:Repository|Repo)(?![a-z])")
-_REPOSITORY_TAIL = re.compile(r"(?:Repository|Repo)$")
+#
+# Множественное число входит в набор, иначе три сторожа расходятся на нём:
+# `repository_markers` в `[tool.query_loops]` содержит `repos` и
+# `repositories`, то есть для `check_n_plus_one` `UserRepos` — репозиторий, а
+# для этих двух не был. Порт во множественном числе можно было внедрить прямо
+# во вход, и оба молчали. Порядок в чередовании от длинного к короткому:
+# иначе `Repo` съел бы начало `Repository` и лукахед отверг бы всё слово.
+_REPOSITORY_NAME = re.compile(r"(?:Repositories|Repository|Repos|Repo)(?![a-z])")
+_REPOSITORY_TAIL = re.compile(r"(?:Repositories|Repository|Repos|Repo)$")
 
 
 def is_repository_port(name: str) -> bool:

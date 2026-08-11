@@ -31,7 +31,13 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _project import ROOT, is_repository_port, names_repository, source_root  # noqa: E402
+from _project import (  # noqa: E402
+    ROOT,
+    is_repository_port,
+    names_repository,
+    require_dir,
+    source_root,
+)
 
 APP_DIR = source_root()
 PYPROJECT = ROOT / "pyproject.toml"
@@ -239,6 +245,13 @@ def check_repository_ports(config: dict) -> list[str]:
     provider_dirs = config.get("provider_dirs", [])
     if not (models_package and ports_package and provider_dirs):
         return []
+    # Пути названы в конфиге — значит их наличие часть настройки, а не догадка.
+    # Опечатка в любом из трёх обнуляла список адаптеров, и сторож печатал «OK»,
+    # не посмотрев ни на один биндинг.
+    require_dir(ROOT / models_package, "[tool.db_access].orm_models")
+    require_dir(ROOT / ports_package, "[tool.db_access].repository_ports")
+    for directory in provider_dirs:
+        require_dir(ROOT / directory, "[tool.db_access].provider_dirs")
 
     adapters = DataAccess.classes(models_package)
     if not adapters:

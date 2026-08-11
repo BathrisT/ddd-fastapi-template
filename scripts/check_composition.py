@@ -32,7 +32,7 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _project import ROOT, names_repository, source_root  # noqa: E402
+from _project import ROOT, names_repository, require_dir, source_root  # noqa: E402
 
 APP_DIR = source_root()
 PYPROJECT = ROOT / "pyproject.toml"
@@ -239,6 +239,10 @@ def check_no_repository_at_entry(config: dict) -> list[str]:
     entry_roots = config.get("entry_roots", [])
     if not entry_roots:
         return []
+    # Опечатка в пути (`app/interfaces` вместо `app/interface`) давала пустой
+    # обход и бодрое «OK»: проверка не проходила, а выглядела пройденной.
+    for root in entry_roots:
+        require_dir(ROOT / root, "[tool.composition].entry_roots")
 
     errors: list[str] = []
     for path in sorted(APP_DIR.rglob("*.py")):

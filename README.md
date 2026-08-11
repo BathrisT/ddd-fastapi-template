@@ -26,12 +26,17 @@ git diff                  # посмотреть, что изменилось, �
 
 cp .env.example .env      # заполнить APP__FERNET_KEY и пароли
 make install              # poetry install + pre-commit install
-make infra-up             # postgres на 5433 и redis на 6379 в docker
-make migrate
-make api                  # http://localhost:8000/health
-make worker               # в отдельном терминале
-make scheduler            # в отдельном терминале
 ```
+
+Дальше поднимайте всё целиком в докере (см. ниже) — там и база, и миграции.
+
+**Целей локального запуска в `Makefile` намеренно нет.** `make api` / `worker` /
+`scheduler` добивали прошлый процесс перед стартом, и маски были слишком
+широкими: `*scheduler*` сносила любой python, у которого это слово встретилось
+хоть в пути, — включая соседний проект. `make infra-up` и `make migrate` ушли
+за компанию: первое из той же оперы, второе не заслуживает своей цели —
+`poetry run alembic upgrade head` не короче через make. Запуск с хоста будет
+продуман отдельной задачей.
 
 `make init` **пропустить не выйдет**: пока имя проекта совпадает с именем
 шаблона, `make check` красный. Коммит он не делает намеренно — правки видно в
