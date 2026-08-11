@@ -23,12 +23,28 @@ PYPROJECT = ROOT / "pyproject.toml"
 _DEFAULT_SOURCE_ROOT = "app"
 
 
-def tool_config(section: str) -> dict:
-    """Секция `[tool.<section>]` из pyproject.toml."""
+def pyproject() -> dict:
+    """Весь pyproject.toml разобранным."""
     if not PYPROJECT.is_file():
         return {}
-    raw = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    return raw.get("tool", {}).get(section, {})
+    return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+
+
+def tool_config(section: str) -> dict:
+    """Секция `[tool.<section>]` из pyproject.toml."""
+    return pyproject().get("tool", {}).get(section, {})
+
+
+def project_name() -> str:
+    """Имя проекта. Пусто, если pyproject его не объявляет.
+
+    Читаются оба места: `[project]` (PEP 621) и `[tool.poetry]`. Шаблон
+    объявляет имя вторым способом, но сторожу это знать незачем — проект,
+    переехавший на первый, не должен из-за этого молча перестать проверяться.
+    """
+    raw = pyproject()
+    declared = raw.get("project", {}).get("name") or raw.get("tool", {}).get("poetry", {}).get("name")
+    return str(declared or "")
 
 
 def require_dir(path: Path, setting: str) -> Path:
@@ -53,6 +69,23 @@ def require_dir(path: Path, setting: str) -> Path:
         )
         sys.exit(2)
     return path
+
+
+def plural(count: int, one: str, few: str, many: str) -> str:
+    """`1 голова`, `2 головы`, `5 голов`.
+
+    Здесь, а не по месту: согласование числительного нужно любому сторожу,
+    который печатает счёт находок, и вторая копия этих четырёх строк разойдётся
+    с первой ровно тогда, когда кто-то поправит одну. Отчёт с «5 головы»
+    выглядит машинным — а сторожа тут читают внимательно только пока верят,
+    что их писал человек.
+    """
+    tail, hundred = count % 10, count % 100
+    if tail == 1 and hundred != 11:
+        return f"{count} {one}"
+    if 2 <= tail <= 4 and not 12 <= hundred <= 14:
+        return f"{count} {few}"
+    return f"{count} {many}"
 
 
 def source_root() -> Path:

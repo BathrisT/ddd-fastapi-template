@@ -10,6 +10,7 @@ upgrade head` и `TRUNCATE` уехали бы в рабочую базу.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 from alembic import command
@@ -54,7 +55,10 @@ def test_settings(postgres: PostgresContainer) -> Settings:
 @pytest.fixture(scope="session", autouse=True)
 def run_migrations(test_settings: Settings) -> None:
     os.environ["ALEMBIC_DB_URL"] = test_settings.database.url
-    cfg = Config("alembic.ini")
+    # Абсолютным путём, а не `Config("alembic.ini")`: относительное имя alembic
+    # ищет от текущего каталога, и прогон тестов не из корня (из IDE, из
+    # подкаталога) падал бы на «нет такого файла».
+    cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
     command.upgrade(cfg, "head")
 
 

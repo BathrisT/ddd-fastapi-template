@@ -18,6 +18,7 @@ make check            # быстрая проверка: lint-check + typecheck 
 make effects-check    # порядок операций: публикация после фиксации, работа с возвращённым
 make env-check        # каждое поле Settings описано в .env.example
 make query-check      # N+1: чтение из репозитория внутри цикла
+make migrations-check # у цепочки ревизий alembic ровно одна голова
 make layout-check     # раскладка кода: где что лежит и какого размера
 make interface-check  # слой входа: что в routes/, откуда зависимости
 make lint             # ruff check --fix + format
@@ -31,6 +32,12 @@ make test-integration # integration-тесты (поднимает PostgreSQL ч
 make migrate          # alembic upgrade head
 make infra-up         # локальные postgres + redis в docker
 make api / worker / scheduler   # запуск точки входа с хоста
+
+# Шаблон — docs/rules/шаблон-и-обновления.md:
+make init NAME=x      # отвязать склонированный шаблон от шаблона (коммит не делает)
+make template-diff    # что придёт из шаблона и во что обойдётся; ничего не меняет
+make template-update  # слить обновление в ветку-буфер `template-update`
+make template-graft   # разово: привить шаблон к проекту с чужой историей
 
 # Одиночный тест:
 poetry run pytest tests/unit/path/to/test.py::test_name -v
@@ -225,6 +232,28 @@ denied — следуй инструкции прямо в тексте отка
 
 `sources/` читается по требованию, а не подряд: там транскрибации на тысячи
 строк.
+
+---
+
+## Шаблон и обновления
+
+Правило целиком — [`docs/rules/шаблон-и-обновления.md`](docs/rules/шаблон-и-обновления.md).
+Коротко:
+
+- **Адрес шаблона и ветка — в `pyproject.toml`, `[tool.template]`.** Git-remote
+  для шаблона не заводится: `git fetch <url> <ref>` работает по адресу
+  напрямую, а второе место хранения того же адреса однажды разошлось бы с
+  первым молча.
+- **`make init` обязателен и не пропускается.** Пока имя проекта совпадает с
+  именем шаблона, `lint-check` красный (`scripts/check_not_initialised.py`).
+  Отличить шаблон от его свежего клона по дереву нельзя — оно то же самое, —
+  поэтому у того, кто дорабатывает сам шаблон, лежит локальный `.is-template`.
+- **`make template-diff` перед `make template-update`.** Он показывает не
+  только входящие коммиты, но и предсказание конфликтов: `git merge-tree`
+  проигрывает слияние в памяти, ничего не трогая.
+- **Два вида находок агент не разрешает сам**, а выносит человеку: конфликты в
+  `migrations/versions/` и в `app/`, а также **любую входящую миграцию** — она
+  сливается чисто и при этом даёт вторую голову в цепочке ревизий.
 
 ---
 

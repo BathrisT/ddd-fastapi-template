@@ -9,13 +9,14 @@ endif
 APP_DIR = ./app
 TEST_DIR = ./tests
 
-.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit review-pack migrate install infra-up infra-down api worker scheduler
+.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check migrations-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit review-pack migrate install infra-up infra-down api worker scheduler init template-diff template-update template-graft
 
 lint:
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) --fix $(ARGS)
 	poetry run ruff format $(APP_DIR) $(TEST_DIR) $(ARGS)
 
-lint-check: layout-check interface-check effects-check env-check query-check
+lint-check: layout-check interface-check effects-check env-check query-check migrations-check
+	poetry run python scripts/check_not_initialised.py
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) $(ARGS)
 	poetry run ruff format $(APP_DIR) $(TEST_DIR) --check $(ARGS)
 	@for f in $$(rg -l --glob="*.py" "# ruff: noqa" $(APP_DIR)); do \
@@ -72,6 +73,13 @@ env-check:
 query-check:
 	poetry run python scripts/check_n_plus_one.py
 
+# Одна голова у цепочки ревизий. Две головы ломают `alembic upgrade head`, но не
+# дают ни красного теста, ни отказа линтера: слияние, которое их породило,
+# проходит чисто — миграции с разных сторон не конфликтуют, файлы-то разные.
+# Базы не требует: heads читаются из каталога ревизий.
+migrations-check:
+	poetry run python scripts/check_migration_heads.py
+
 typecheck:
 	poetry run mypy $(APP_DIR) $(ARGS)
 
@@ -120,6 +128,47 @@ review-pack:
 
 migrate:
 	poetry run alembic upgrade head
+
+# ─── Шаблон ──────────────────────────────────────────────────────────────────
+# Правило целиком: docs/rules/шаблон-и-обновления.md
+
+# Первое, что делают после `git clone`: имя проекта на место имени шаблона,
+# `origin` прочь, если он ведёт в шаблон. Коммит НЕ делается — человек смотрит
+# дифф. Пропустить нельзя: `check_not_initialised.py` держит `lint-check`
+# красным, пока имя проекта совпадает с именем шаблона.
+#
+# Здесь голый интерпретатор, а не `poetry run`: цель зовут ДО `make install`,
+# когда окружения ещё нет. Скрипту хватает стандартной библиотеки.
+#
+# Имя интерпретатора подставляется, а не угадывается, и это не педантизм: на
+# Linux и macOS PEP 394 гарантирует `python3`, а `python` во многих
+# дистрибутивах просто отсутствует; на Windows ровно наоборот — установщик с
+# python.org кладёт `python`, а `python3` там либо нет вовсе, либо это
+# заглушка, открывающая Microsoft Store. Ошибиться тут дороже всего: это самая
+# первая команда после клонирования, и «python: команда не найдена» — всё, что
+# человек успеет узнать о шаблоне.
+ifeq ($(OS),Windows_NT)
+INIT_PY = python
+else
+INIT_PY = python3
+endif
+
+init:
+	$(INIT_PY) scripts/init_project.py --name "$(NAME)"
+
+# Что придёт и во что обойдётся: входящие коммиты, расхождение в обе стороны и
+# предсказание конфликтов (git merge-tree, рабочее дерево не трогается).
+template-diff:
+	poetry run python scripts/template_sync.py --diff
+
+# Слияние в ветку-буфер `template-update`. Зависит от `check`: в красное дерево
+# не сливаем, иначе после слияния не разобрать, чья краснота.
+template-update: check
+	poetry run python scripts/template_sync.py --update
+
+# Разовая прививка шаблона к проекту, который начинался не из него.
+template-graft:
+	poetry run python scripts/template_sync.py --graft
 
 install:
 	poetry install

@@ -49,7 +49,10 @@ def main() -> int:
             llm=LLM(),
         )
         os.environ["ALEMBIC_DB_URL"] = settings.database.url
-        cfg = Config("alembic.ini")
+        # Абсолютным путём, а не `Config("alembic.ini")`: относительное имя
+        # alembic ищет от текущего каталога, и запуск не из корня падал бы на
+        # «нет такого файла» вместо проверки схемы.
+        cfg = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
         command.upgrade(cfg, "head")
         try:
             command.check(cfg)
