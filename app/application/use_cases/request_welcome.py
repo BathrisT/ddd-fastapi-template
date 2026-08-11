@@ -19,12 +19,12 @@ from app.domain.exceptions import NotFoundError
 
 
 class RequestWelcomeUseCase:
-    def __init__(self, users: UserRepo, tasks: TaskSubmitter) -> None:
-        self._users = users
+    def __init__(self, users_repo: UserRepo, tasks: TaskSubmitter) -> None:
+        self._users_repo = users_repo
         self._tasks = tasks
 
     async def execute(self, user_id: int) -> str:
-        if await self._users.get_by_id(user_id) is None:
+        if await self._users_repo.get_by_id(user_id) is None:
             raise NotFoundError(f"Пользователь {user_id} не найден")
 
         return await self._tasks.submit(WelcomeUser(user_id=user_id))

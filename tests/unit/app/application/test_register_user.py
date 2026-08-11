@@ -6,7 +6,7 @@ from app.domain.exceptions import ConflictError, ValidationError
 
 
 def _use_case(users, committer, publisher):
-    return RegisterUserUseCase(users=users, committer=committer, events=publisher)
+    return RegisterUserUseCase(users_repo=users, committer=committer, events=publisher)
 
 
 async def test_registers_and_publishes(users, committer, publisher):

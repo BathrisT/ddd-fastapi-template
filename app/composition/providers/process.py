@@ -25,13 +25,13 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.application.ports.key_guard import KeyGuard
+from app.application.ports.repositories.welcome_attempt_repo import WelcomeAttemptRepo
 from app.application.ports.services.ai_service import AiService
-from app.application.ports.welcome_journal import WelcomeJournal
 from app.application.services.caller_resolver import CallerResolver
 from app.config import Settings
 from app.infrastructure.crypto.token_cipher import TokenCipher
 from app.infrastructure.db.autonomous_session import AutonomousSession
-from app.infrastructure.db.repositories.welcome_journal import SqlWelcomeJournal
+from app.infrastructure.db.repositories.welcome_attempt_repo import SqlWelcomeAttemptRepo
 from app.infrastructure.redis.key_guard import RedisKeyGuard
 from app.infrastructure.services.openai_service import OpenAiService
 
@@ -106,7 +106,7 @@ class ProcessProvider(Provider):
 
     # Журнал процессный, а не привходовой: своя короткая транзакция на
     # своём engine, от сессии сценария не зависит вовсе.
-    journal = provide(SqlWelcomeJournal, provides=WelcomeJournal)
+    journal = provide(SqlWelcomeAttemptRepo, provides=WelcomeAttemptRepo)
 
     @provide
     def caller_resolver(self, settings: Settings) -> CallerResolver:

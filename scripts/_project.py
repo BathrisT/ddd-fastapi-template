@@ -14,6 +14,7 @@
    молчать о ней нельзя.
 """
 
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -69,6 +70,46 @@ def require_dir(path: Path, setting: str) -> Path:
         )
         sys.exit(2)
     return path
+
+
+# `Repo` или `Repository`, за которыми НЕ идёт строчная буква.
+#
+# Именно так, а не `(?=[A-Z]|$)`: предикату скармливают не голое имя класса, а
+# разобранную аннотацию — `ast.unparse` отдаёт `UserRepo | None` и
+# `list[UserRepo]`, и требование «заглавная или конец» отвергало обе. Вход,
+# попросивший `FromDishka[UserRepo | None]`, проходил бы мимо проверки молча.
+# Запрет одной лишь строчной буквы отсекает `Report` (ради чего граница и
+# нужна) и пропускает любой разделитель, какой встретится в аннотации.
+_REPOSITORY_NAME = re.compile(r"(?:Repository|Repo)(?![a-z])")
+_REPOSITORY_TAIL = re.compile(r"(?:Repository|Repo)$")
+
+
+def is_repository_port(name: str) -> bool:
+    """Сам репозиторий, а не то, что его отдаёт.
+
+    `UserRepo` — прямой порт, ему место в `ports/repositories/`.
+    `PortalAnchorTemplateRepoFactory` и `SubscriptionRepoByPortal` репозиторий
+    отдают, но сами им не являются, и живут по своей роли — с них расположение
+    не спрашивают.
+    """
+    return bool(_REPOSITORY_TAIL.search(name))
+
+
+def names_repository(name: str) -> bool:
+    """Говорит ли имя типа, что за ним репозиторий.
+
+    Один предикат на всех, кто опознаёт репозиторий ПО ИМЕНИ ТИПА, — иначе
+    сторожа разъезжаются молча: `check_composition` отбивал `*Repo` во входе
+    строгим окончанием, `check_db_access` требовал того же от порта, и
+    `SubscriptionRepoByPortal` был репозиторием для одного и не был для
+    другого.
+
+    Граница слова обязательна и в конце, и в середине. По окончанию —
+    `PortalAnchorTemplateRepoFactory` и `SubscriptionRepoByPortal` перестают
+    считаться репозиториями, хотя отдают именно его. По подстроке — им
+    становится `ReportService`, потому что `Repo` живёт внутри `Report`.
+    """
+    return bool(_REPOSITORY_NAME.search(name))
 
 
 def plural(count: int, one: str, few: str, many: str) -> str:

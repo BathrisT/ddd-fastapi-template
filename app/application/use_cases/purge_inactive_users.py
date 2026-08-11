@@ -28,13 +28,13 @@ from app.application.ports.repositories.user_repo import UserRepo
 
 
 class PurgeInactiveUsersUseCase:
-    def __init__(self, users: UserRepo, committer: Committer) -> None:
-        self._users = users
+    def __init__(self, users_repo: UserRepo, committer: Committer) -> None:
+        self._users_repo = users_repo
         self._committer = committer
 
     async def execute(self, keep_days: int) -> int:
         cutoff = datetime.now(tz=UTC) - timedelta(days=keep_days)
-        removed = await self._users.delete_inactive_before(cutoff)
+        removed = await self._users_repo.delete_inactive_before(cutoff)
         await self._committer.commit()
         if removed:
             logger.info("purge_inactive_users: удалено {} регистраций старше {}", removed, cutoff)

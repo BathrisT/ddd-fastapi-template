@@ -23,7 +23,7 @@ async def test_returns_job_id_and_submits_the_intent(users):
     saved = await users.save(User(id=0, email="ann@example.com", name="Аня"))
     tasks = FakeTaskSubmitter()
 
-    job_id = await RequestWelcomeUseCase(users=users, tasks=tasks).execute(saved.id)
+    job_id = await RequestWelcomeUseCase(users_repo=users, tasks=tasks).execute(saved.id)
 
     assert job_id == "job-1"
     assert tasks.submitted == [WelcomeUser(user_id=saved.id)]
@@ -38,6 +38,6 @@ async def test_missing_user_refuses_before_submitting(users):
     tasks = FakeTaskSubmitter()
 
     with pytest.raises(NotFoundError):
-        await RequestWelcomeUseCase(users=users, tasks=tasks).execute(999)
+        await RequestWelcomeUseCase(users_repo=users, tasks=tasks).execute(999)
 
     assert tasks.submitted == []

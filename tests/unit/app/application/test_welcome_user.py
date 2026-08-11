@@ -40,10 +40,10 @@ class BusyGuard:
 
 def _use_case(users, ai, committer, journal=None, guard=None):
     return WelcomeUserUseCase(
-        users=users,
+        users_repo=users,
         ai=ai,
         committer=committer,
-        journal=journal or FakeJournal(),
+        journal_repo=journal or FakeJournal(),
         guard=guard or FreeGuard(),
     )
 

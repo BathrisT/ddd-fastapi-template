@@ -11,8 +11,11 @@
 
 Лежит в `repositories/` рядом с `SqlUserRepo`, потому что роль у него та же:
 адаптер доступа к данным. Отличается только владелец транзакции — не сессия
-сценария, а своя. Сценарий видит порт `WelcomeJournal` и про SQL не знает:
-импорт `sqlalchemy` за пределами `infrastructure/db/` запрещён
+сценария, а своя. Сценарий видит порт `WelcomeAttemptRepo` и про SQL не знает.
+
+Этот класс — образец того, почему сторож опознаёт доступ к данным по работе с
+ORM-моделью, а не по импорту sqlalchemy: **здесь импорта sqlalchemy нет**, и
+проверка по импорту пропустила бы запись в таблицу целиком
 (`scripts/check_db_access.py`).
 """
 
@@ -20,7 +23,7 @@ from app.infrastructure.db.autonomous_session import AutonomousSession
 from app.infrastructure.db.models.welcome_attempt import WelcomeAttemptORM
 
 
-class SqlWelcomeJournal:
+class SqlWelcomeAttemptRepo:
     def __init__(self, autonomous: AutonomousSession) -> None:
         self._autonomous = autonomous
 

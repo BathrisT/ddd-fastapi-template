@@ -34,8 +34,8 @@ class RegisterUserCommand:
 
 
 class RegisterUserUseCase:
-    def __init__(self, users: UserRepo, committer: Committer, events: EventPublisher) -> None:
-        self._users = users
+    def __init__(self, users_repo: UserRepo, committer: Committer, events: EventPublisher) -> None:
+        self._users_repo = users_repo
         self._committer = committer
         self._events = events
 
@@ -49,14 +49,14 @@ class RegisterUserUseCase:
         # уникальный индекс в базе, и репозиторий переводит его отказ в тот же
         # `ConflictError`. Без проверки пользователь получал бы 409 только на
         # гонке, а на обычном повторе — тоже 409, но из глубины адаптера.
-        if await self._users.get_by_email(user.email) is not None:
+        if await self._users_repo.get_by_email(user.email) is not None:
             raise ConflictError(f"Пользователь с почтой {user.email} уже есть")
 
         # Работаем с ВОЗВРАЩЁННЫМ объектом, а не с переданным: идентификатор
         # присваивает база, и у аргумента он так и остаётся нулевым. Событие с
         # `user_id=0` ничего бы не сломало на месте — оно просто ушло бы в
         # никуда, а обработчик написал бы «пользователя 0 больше нет».
-        saved = await self._users.save(user)
+        saved = await self._users_repo.save(user)
         await self._committer.commit()
 
         await self._events.publish(UserRegistered(user_id=saved.id))

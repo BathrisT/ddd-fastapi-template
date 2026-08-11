@@ -26,8 +26,8 @@ from app.application.dto.welcome_outcome import WelcomeOutcome
 from app.application.ports.committer import Committer
 from app.application.ports.key_guard import KeyGuard
 from app.application.ports.repositories.user_repo import UserRepo
+from app.application.ports.repositories.welcome_attempt_repo import WelcomeAttemptRepo
 from app.application.ports.services.ai_service import AiService
-from app.application.ports.welcome_journal import WelcomeJournal
 
 # Ключ на пользователя, а не на задачу: две задачи по одному пользователю —
 # ровно то, что надо развести.
@@ -40,16 +40,16 @@ _LOCK_TTL_S = 5 * 60
 class WelcomeUserUseCase:
     def __init__(
         self,
-        users: UserRepo,
+        users_repo: UserRepo,
         ai: AiService,
         committer: Committer,
-        journal: WelcomeJournal,
+        journal_repo: WelcomeAttemptRepo,
         guard: KeyGuard,
     ) -> None:
-        self._users = users
+        self._users_repo = users_repo
         self._ai = ai
         self._committer = committer
-        self._journal = journal
+        self._journal_repo = journal_repo
         self._guard = guard
 
     async def execute(self, user_id: int) -> WelcomeOutcome:
@@ -74,7 +74,7 @@ class WelcomeUserUseCase:
             await self._guard.release(f"{_LOCK_PREFIX}{user_id}", token)
 
     async def _welcome(self, user_id: int) -> WelcomeOutcome:
-        user = await self._users.get_by_id(user_id)
+        user = await self._users_repo.get_by_id(user_id)
         if user is None:
             # Не отказ: пользователя могли удалить, пока задача ждала в очереди.
             logger.info("welcome_user: пользователя {} больше нет — пропуск", user_id)
@@ -91,12 +91,12 @@ class WelcomeUserUseCase:
         try:
             message = await self._ai.welcome_text(user.name)
         except Exception:
-            await self._journal.record(user_id, "error")
+            await self._journal_repo.record(user_id, "error")
             raise
-        await self._journal.record(user_id, "success")
+        await self._journal_repo.record(user_id, "success")
 
         user.welcome_message = message
-        await self._users.save(user)
+        await self._users_repo.save(user)
         await self._committer.commit()
 
         return WelcomeOutcome(status="welcomed", message=message)

@@ -32,7 +32,7 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _project import ROOT, source_root  # noqa: E402
+from _project import ROOT, names_repository, source_root  # noqa: E402
 
 APP_DIR = source_root()
 PYPROJECT = ROOT / "pyproject.toml"
@@ -237,8 +237,7 @@ def check_no_repository_at_entry(config: dict) -> list[str]:
     `application/`.
     """
     entry_roots = config.get("entry_roots", [])
-    suffixes = tuple(config.get("repository_suffixes", []))
-    if not entry_roots or not suffixes:
+    if not entry_roots:
         return []
 
     errors: list[str] = []
@@ -261,7 +260,11 @@ def check_no_repository_at_entry(config: dict) -> list[str]:
                 if getattr(annotation.value, "id", None) != "FromDishka":
                     continue
                 requested = ast.unparse(annotation.slice)
-                if not requested.endswith(suffixes):
+                # Предикат общий с `check_db_access` (`_project.names_repository`):
+                # строгое окончание пропускало `SubscriptionRepoByPortal` и
+                # `PortalAnchorTemplateRepoFactory` — они отдают репозиторий, и
+                # вход, попросивший их, берёт репозиторий ровно так же.
+                if not names_repository(requested):
                     continue
                 relative = path.relative_to(ROOT).as_posix()
                 errors.append(

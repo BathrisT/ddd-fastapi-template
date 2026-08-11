@@ -8,8 +8,8 @@ _MAX_LIMIT = 100
 
 
 class ListUsersUseCase:
-    def __init__(self, users: UserRepo) -> None:
-        self._users = users
+    def __init__(self, users_repo: UserRepo) -> None:
+        self._users_repo = users_repo
 
     async def execute(self, limit: int) -> list[User]:
-        return await self._users.list_recent(min(limit, _MAX_LIMIT))
+        return await self._users_repo.list_recent(min(limit, _MAX_LIMIT))
