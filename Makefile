@@ -148,7 +148,7 @@ test-selected:
 	@mkdir -p .make-cache; \
 	 plan="$$(poetry run python scripts/select_tests.py plan)"; \
 	 case "$$plan" in \
-	   ""|FULL:*) echo "Тесты: полный прогон — $${plan:-отбор не смог ответить}"; "$(RECURSE)" test ;; \
+	   ""|FULL:*) why="$${plan#FULL:}"; echo "Тесты: полный прогон — $${why:-отбор не смог ответить}"; "$(RECURSE)" test ;; \
 	   NOTHING) echo "Тесты: с прошлого зелёного прогона не менялось ничего, что они проверяют" ;; \
 	   *) echo "Тесты выборочно: $$plan"; \
 	      echo "  (планка покрытия здесь НЕ проверяется — она меряется только полным прогоном)"; \
@@ -163,7 +163,7 @@ test-selected:
 test-unit:
 	@plan="$(if $(FULL),FULL:FULL=1,$$(poetry run python scripts/select_tests.py plan --within $(TEST_DIR)/unit))"; \
 	 case "$$plan" in \
-	   ""|FULL:*) echo "Unit целиком — $${plan:-отбор не смог ответить}"; \
+	   ""|FULL:*) why="$${plan#FULL:}"; echo "Unit целиком — $${why:-отбор не смог ответить}"; \
 	      poetry run pytest $(TEST_DIR)/unit -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered -q $(ARGS) ;; \
 	   NOTHING) echo "Unit: с прошлого зелёного прогона не менялось ничего, что они проверяют" ;; \
 	   *) echo "Unit выборочно: $$plan"; poetry run pytest $$plan -n auto -q $(ARGS) ;; \
@@ -172,7 +172,7 @@ test-unit:
 test-integration:
 	@plan="$(if $(FULL),FULL:FULL=1,$$(poetry run python scripts/select_tests.py plan --within $(TEST_DIR)/integration))"; \
 	 case "$$plan" in \
-	   ""|FULL:*) echo "Интеграционные целиком — $${plan:-отбор не смог ответить}"; \
+	   ""|FULL:*) why="$${plan#FULL:}"; echo "Интеграционные целиком — $${why:-отбор не смог ответить}"; \
 	      poetry run pytest $(TEST_DIR)/integration -n auto -q $(ARGS) ;; \
 	   NOTHING) echo "Интеграционные: с прошлого зелёного прогона не менялось ничего, что они проверяют" ;; \
 	   *) echo "Интеграционные выборочно: $$plan"; poetry run pytest $$plan -n auto -q $(ARGS) ;; \
