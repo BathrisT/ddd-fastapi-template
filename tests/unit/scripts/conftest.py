@@ -39,6 +39,41 @@ name = "fixture-project"
 """
 
 
+def child_env(**extra: str) -> dict[str, str]:
+    """Окружение дочернего процесса — БЕЗ переменных coverage.
+
+    Не гигиена, а починка тихой поломки. По переменным `COV_CORE_*` pytest-cov
+    поднимает измерение и в дочернем процессе, а данные вливает в общие. Источник
+    покрытия задан относительным путём (`--cov=./app` в Makefile), у потомка
+    `cwd` — временный проект, значит его `./app` — это `app/measured.py` и
+    `app/never_touched.py`, которые тест только что написал сам. В итоговом
+    отчёте они появляются непокрытыми, TOTAL растёт на их строки, процент
+    падает — и сторож планки отбивает прогон, где настоящий `app/` никто не
+    трогал:
+
+        .../test_garbage_in_the_baseline_i0/project/app/measured.py  3  3  0%
+        Coverage: покрытие просело: было 89.07%, стало 88.17% (-0.90).
+
+    Ловится не сразу: при `-n auto` слияние данных потомка зависит от воркера и
+    тайминга, так что `make precommit` краснел через раз и на ровном месте.
+
+    Отбрасывается всё, что начинается на `COV`, а не поимённый список: сюда же
+    попадает `COVERAGE_FILE` (иначе `coverage run` внутри временного проекта
+    писал бы данные в файл родителя) и любая переменная, которую заведут в
+    следующей версии pytest-cov. Терять нечего: `--cov=./app` до `scripts/` не
+    достаёт, и измерение этих потомков не давало ничего, кроме мусора.
+
+    Общей функцией, а не по месту: вызовов два (`Repo.run` и `measure()` в
+    `test_check_coverage.py`), и починка одного из них ровно ничего не меняет —
+    проверено.
+    """
+    environment = {
+        key: value for key, value in os.environ.items() if not key.upper().startswith("COV")
+    }
+    environment.update(extra)
+    return environment
+
+
 @dataclass(frozen=True)
 class Run:
     """Результат запуска сторожа: код возврата и весь его вывод."""
@@ -82,11 +117,8 @@ class Repo:
         # PYTHONIOENCODING обязателен: отчёты сторожей на русском, а дочерний
         # процесс на Windows кодирует поток по локали (cp1251) — родитель
         # получил бы мусор вместо текста, по которому тест и судит.
-        environment = {
-            **os.environ,
-            "PYTHONIOENCODING": "utf-8",
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
+        # Про отсутствие переменных coverage — в `child_env`.
+        environment = child_env(PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
         completed = subprocess.run(
             [sys.executable, str(self.root / "scripts" / f"{guard}.py")],
             cwd=self.root,

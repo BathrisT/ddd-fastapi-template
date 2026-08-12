@@ -25,7 +25,7 @@ endif
 APP_DIR = ./app
 TEST_DIR = ./tests
 
-.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check migrations-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit review-pack install init template-diff template-update template-graft
+.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check migrations-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit precommit-steps review-pack install init template-diff template-update template-graft
 
 lint:
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) --fix $(ARGS)
@@ -127,7 +127,36 @@ bandit:
 
 check: lint-check typecheck layers test-unit
 
-precommit: lint-check typecheck layers schema-check test bandit
+# Полный прогон идёт минутами, а повторяется он почти всегда: сначала руками,
+# потом хуком `pre-commit` при самом `git commit` — на том же содержимом файлов
+# (индексация их не меняет). Обёртка считает отпечаток входа (содержимое всех
+# файлов проекта + версии установленных пакетов) и при совпадении с уже
+# помеченным зелёным не запускает ничего.
+#
+# Ключ по СОДЕРЖИМОМУ, а не по диффу: `git diff` не показывает untracked, и
+# новый непроиндексированный модуль не сбросил бы кэш — «зелёное» приехало бы
+# про файл, которого не видели ни mypy, ни pytest. Подробности и остальные
+# грабли — в шапке scripts/precommit_cache.py.
+#
+# Мимо кэша: `make precommit FORCE=1` (или PRECOMMIT_CACHE=off в окружении).
+# Красное не кэшируется никогда.
+#
+# `$(RECURSE)`, а не `$(MAKE)` прямо в строке, и это не косметика: строку с
+# буквальным `$(MAKE)` make считает рекурсивным вызовом и ВЫПОЛНЯЕТ её даже под
+# `-n`. То есть `make -n precommit` — «покажи, что бы ты сделал» — не показывал
+# бы, а делал; на GnuWin32 он при этом падает с `CreateProcess(NULL, "")` и
+# кодом 87, где про причину нет ни слова. Через переменную-посредника строка
+# остаётся обычной командой, а MAKEFLAGS (в них едут и `ARGS=...`) наследуется
+# дочерним make через окружение независимо от этого.
+RECURSE = $(MAKE)
+
+precommit:
+	@poetry run python scripts/precommit_cache.py precommit $(ARGS) $(if $(FORCE),--force) :: "$(RECURSE)" precommit-steps
+
+# Сам прогон. Отдельной целью, потому что кэш обязан оборачивать ВЕСЬ набор
+# целиком: обёртка на `precommit` со списком в зависимостях не работает — make
+# выполняет зависимости до рецепта, то есть до всякого решения о пропуске.
+precommit-steps: lint-check typecheck layers schema-check test bandit
 
 # Пакеты для ревью-гейта: по файлу на проход линзы (весь дифф с окружением,
 # у каждого прохода свой порядок разделов) плюс журналы линз. Собирается перед

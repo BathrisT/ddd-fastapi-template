@@ -8,7 +8,7 @@
 import subprocess
 import sys
 
-from tests.unit.scripts.conftest import Repo
+from tests.unit.scripts.conftest import Repo, child_env
 
 BASELINE = ".coverage-baseline"
 
@@ -37,11 +37,16 @@ def measure(repo: Repo) -> None:
         """,
     )
     repo.write("run_it.py", "from app.measured import Measured\n\nMeasured().run()\n")
+    # `env=child_env()` обязателен: без него потомок наследует переменные
+    # pytest-cov, и ЭТИ ДВА модуля приезжают в отчёт покрытия всего репозитория
+    # непокрытыми — планка проседает, precommit краснеет там, где `app/` никто
+    # не трогал. Подробно — в `child_env`.
     subprocess.run(
         [sys.executable, "-m", "coverage", "run", "--source=app", "run_it.py"],
         cwd=repo.root,
         capture_output=True,
         check=True,
+        env=child_env(),
     )
 
 
