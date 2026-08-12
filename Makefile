@@ -25,7 +25,7 @@ endif
 APP_DIR = ./app
 TEST_DIR = ./tests
 
-.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check migrations-check typecheck layers layers-show layers-report schema-check test test-unit test-integration check bandit precommit precommit-steps review-pack install init template-diff template-update template-graft
+.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check migrations-check typecheck layers layers-show layers-report schema-check test test-selected test-unit test-integration check bandit precommit precommit-steps precommit-steps-full review-pack install init template-diff template-update template-graft
 
 lint:
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) --fix $(ARGS)
@@ -101,8 +101,18 @@ layers-show:
 layers-report:
 	poetry run tach report $(ARGS)
 
+# Единственная проверка, которая поднимает контейнер ради самой себя, — и вход у
+# неё узкий: миграции, ORM-модели, alembic.ini, config и сам скрипт (тег образа
+# зашит в нём). Ничего из этого не менялось с прошлого зелёного прогона —
+# поднимать Postgres незачем. Группа `schema` в [tool.test_selection.watch].
+#
+# `FULL=1` гонит её всегда: это тот прогон, который ничего не принимает на веру.
 schema-check:
-	poetry run python scripts/check_schema_consistency.py
+	@answer="$(if $(FULL),YES:FULL=1,$$(poetry run python scripts/select_tests.py touched schema))"; \
+	 case "$$answer" in \
+	   NO) echo "Schema check: миграции и ORM-модели не менялись — пропуск (контейнер не поднимается)" ;; \
+	   *) echo "Schema check: $${answer#YES:}"; poetry run python scripts/check_schema_consistency.py ;; \
+	 esac
 
 # Покрытие гейтит ТОЛЬКО полный прогон (unit+integration): `test-unit` в
 # одиночку меряется против всего app/, включая слой входа, который покрывается
@@ -112,15 +122,61 @@ schema-check:
 # Постоянного порога нет: достигнутое лежит в `.coverage-baseline`, и сторож
 # сам поднимает планку, когда покрытие выросло. Опускать её умеет только
 # человек — правкой файла, видимой в диффе.
+# Полный прогон. Он же единственный, кто проверяет планку покрытия: выборочный
+# меряет подмножество и показывал бы «просадку» всегда.
+#
+# `--junitxml` — не для отчётности, а для сторожа отбора: по нему
+# `select_tests.py verify` смотрит, не упал ли тест, который выборочный прогон
+# до этого отсеял. Упал — соврало правило отбора, и это единственный способ
+# узнать об этом, не дожидаясь бага. Прошёл — журнал решений очищается.
+# Старый отчёт удаляется ДО прогона, и это не уборка. Упади pytest раньше, чем
+# допишет `--junitxml` (недоступный Docker, ошибка сборки), `verify` прочитал бы
+# прошлый файл и обвинил отбор во лжи на чужих падениях — то есть сторож, чья
+# работа ловить ложную тревогу, сам бы её и поднял.
 test:
-	poetry run pytest $(TEST_DIR) -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered -q $(ARGS)
+	@mkdir -p .make-cache && rm -f .make-cache/full-run.xml
+	@poetry run pytest $(TEST_DIR) -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered -q --junitxml=.make-cache/full-run.xml $(ARGS); \
+	 code=$$?; poetry run python scripts/select_tests.py verify; exit $$code
 	poetry run python scripts/check_coverage.py
 
+# Выборочный прогон: только те тесты, до которых изменения могли дотянуться.
+# Правила — `[tool.test_selection]`, механика и её пределы — в шапке
+# scripts/select_tests.py. Незнакомый файл, не-питоновский файл, исчезнувший
+# файл и триггер из конфига переводят в полный прогон: безопасная сторона у
+# отбора — прогнать всё.
+test-selected:
+	@mkdir -p .make-cache; \
+	 plan="$$(poetry run python scripts/select_tests.py plan)"; \
+	 case "$$plan" in \
+	   ""|FULL:*) echo "Тесты: полный прогон — $${plan:-отбор не смог ответить}"; "$(RECURSE)" test ;; \
+	   NOTHING) echo "Тесты: с прошлого зелёного прогона не менялось ничего, что они проверяют" ;; \
+	   *) echo "Тесты выборочно: $$plan"; \
+	      echo "  (планка покрытия здесь НЕ проверяется — она меряется только полным прогоном)"; \
+	      poetry run pytest $$plan -n auto -q $(ARGS) ;; \
+	 esac
+
+# Отдельные части набора спрашивают то же правило отбора, только про свою часть
+# (`--within`). `FULL=1` — прогнать часть целиком.
+#
+# Покрытие меряется только на полном прогоне части: у выборочного оно считалось
+# бы по подмножеству тестов и показывало бы просадку всегда.
 test-unit:
-	poetry run pytest $(TEST_DIR)/unit -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered -q $(ARGS)
+	@plan="$(if $(FULL),FULL:FULL=1,$$(poetry run python scripts/select_tests.py plan --within $(TEST_DIR)/unit))"; \
+	 case "$$plan" in \
+	   ""|FULL:*) echo "Unit целиком — $${plan:-отбор не смог ответить}"; \
+	      poetry run pytest $(TEST_DIR)/unit -n auto --cov=$(APP_DIR) --cov-report=term:skip-covered -q $(ARGS) ;; \
+	   NOTHING) echo "Unit: с прошлого зелёного прогона не менялось ничего, что они проверяют" ;; \
+	   *) echo "Unit выборочно: $$plan"; poetry run pytest $$plan -n auto -q $(ARGS) ;; \
+	 esac
 
 test-integration:
-	poetry run pytest $(TEST_DIR)/integration -n auto -q $(ARGS)
+	@plan="$(if $(FULL),FULL:FULL=1,$$(poetry run python scripts/select_tests.py plan --within $(TEST_DIR)/integration))"; \
+	 case "$$plan" in \
+	   ""|FULL:*) echo "Интеграционные целиком — $${plan:-отбор не смог ответить}"; \
+	      poetry run pytest $(TEST_DIR)/integration -n auto -q $(ARGS) ;; \
+	   NOTHING) echo "Интеграционные: с прошлого зелёного прогона не менялось ничего, что они проверяют" ;; \
+	   *) echo "Интеграционные выборочно: $$plan"; poetry run pytest $$plan -n auto -q $(ARGS) ;; \
+	 esac
 
 bandit:
 	poetry run bandit -r $(APP_DIR) -q -c pyproject.toml $(ARGS)
@@ -141,6 +197,10 @@ check: lint-check typecheck layers test-unit
 # Мимо кэша: `make precommit FORCE=1` (или PRECOMMIT_CACHE=off в окружении).
 # Красное не кэшируется никогда.
 #
+# `FULL=1` — прогнать ВСЕ тесты вместо выборочных и заодно мимо кэша. Это тот
+# прогон, который проверяет планку покрытия и сверяет отсеянное отбором с
+# реальностью. Его место — перед пушем и в CI; на каждый коммит он не нужен.
+#
 # `$(RECURSE)`, а не `$(MAKE)` прямо в строке, и это не косметика: строку с
 # буквальным `$(MAKE)` make считает рекурсивным вызовом и ВЫПОЛНЯЕТ её даже под
 # `-n`. То есть `make -n precommit` — «покажи, что бы ты сделал» — не показывал
@@ -151,12 +211,17 @@ check: lint-check typecheck layers test-unit
 RECURSE = $(MAKE)
 
 precommit:
-	@poetry run python scripts/precommit_cache.py precommit $(ARGS) $(if $(FORCE),--force) :: "$(RECURSE)" precommit-steps
+	@poetry run python scripts/precommit_cache.py precommit $(ARGS) $(if $(FORCE)$(FULL),--force) :: "$(RECURSE)" $(if $(FULL),precommit-steps-full,precommit-steps)
 
 # Сам прогон. Отдельной целью, потому что кэш обязан оборачивать ВЕСЬ набор
 # целиком: обёртка на `precommit` со списком в зависимостях не работает — make
 # выполняет зависимости до рецепта, то есть до всякого решения о пропуске.
-precommit-steps: lint-check typecheck layers schema-check test bandit
+#
+# Отбор применяется ТОЛЬКО к тестам. Сторожа, ruff, mypy и tach гоняются целиком
+# всегда: они стоят секунды, резать там нечего — а значит и врать нечему.
+precommit-steps: lint-check typecheck layers schema-check test-selected bandit
+
+precommit-steps-full: lint-check typecheck layers schema-check test bandit
 
 # Пакеты для ревью-гейта: по файлу на проход линзы (весь дифф с окружением,
 # у каждого прохода свой порядок разделов) плюс журналы линз. Собирается перед

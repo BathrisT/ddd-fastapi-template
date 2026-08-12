@@ -23,6 +23,15 @@ make precommit        # перед коммитом: lint-check + typecheck + la
                       # ОТВЕТ ИЗ КЭША НАЗЫВАЮТ КЭШЕМ. «Precommit зелёный» без этого
                       # слова — тот же выдуманный результат, что в правиле 7 ниже.
                       # Механика и грабли — scripts/precommit_cache.py
+                      #
+                      # Тесты гоняются ВЫБОРОЧНО: только те, до которых изменения
+                      # могли дотянуться (правила — [tool.test_selection], механика
+                      # и её пределы — scripts/select_tests.py). Отбор сдаётся и
+                      # гонит всё, если файл незнакомый, не .py, исчез или попал в
+                      # триггер. Планку покрытия выборочный прогон НЕ проверяет.
+make precommit FULL=1 # полный прогон: все тесты, планка покрытия и сверка того,
+                      # что отбор до этого отсеивал, с тем, что падает на самом
+                      # деле. Место — перед пушем и в CI, не на каждый коммит.
 make check            # быстрая проверка: lint-check + typecheck + layers + unit-тесты
 make effects-check    # порядок операций: публикация после фиксации, работа с возвращённым
 make env-check        # каждое поле Settings описано в .env.example
@@ -38,9 +47,15 @@ make layers-report ARGS=app/domain   # tach report — детали по кат�
                       # именно `ARGS=` и именно ПУТЬ: без `ARGS=` make примет
                       # аргумент за вторую цель, а `tach report` берёт путь, а
                       # не имя модуля (`app/domain`, не `app.domain`)
-make test             # все тесты с coverage
-make test-unit        # unit-тесты (параллельно, без Docker)
-make test-integration # integration-тесты (поднимает PostgreSQL через testcontainers)
+make test             # ВСЕ тесты с coverage; единственный, кто гейтит планку
+make test-selected    # только затронутые изменениями (см. precommit выше)
+make test-unit        # unit-тесты (параллельно, без Docker) — тоже выборочно,
+                      # в пределах своей части набора; FULL=1 прогонит все
+make test-integration # integration-тесты (поднимает PostgreSQL через testcontainers),
+                      # выборочно так же; FULL=1 прогонит все
+make schema-check     # сверяет ORM с миграциями; пропускается, если ни миграции,
+                      # ни ORM-модели не менялись с прошлого зелёного прогона
+                      # (группа `schema` в [tool.test_selection.watch]), FULL=1 — всегда
 
 # Шаблон — docs/rules/шаблон-и-обновления.md:
 make init NAME=x      # отвязать склонированный шаблон от шаблона (коммит не делает)

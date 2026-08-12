@@ -109,6 +109,10 @@ DEFAULT_IGNORE = ("docs/**", "*.md", ".claude/**", ".idea/**", ".vscode/**")
 # отменяет запись в кэш — запоминается дерево, каким оно стало.
 DEFAULT_SELF_UPDATING = (".coverage-baseline",)
 
+# Отметка «файла на месте нет»: удалён, либо на его месте каталог (подмодуль).
+# Только ASCII — bytes-литерал другого не принимает.
+ABSENT = b"<absent>"
+
 USAGE = "python scripts/precommit_cache.py <область> [--force] :: <команда...>"
 
 # `--` понимается для запуска мимо poetry; в самом Makefile стоит `::`, потому
@@ -206,26 +210,62 @@ def file_marks() -> dict[str, bytes]:
         except OSError:
             # Удалённый, но ещё числящийся в индексе файл; либо каталог-gitlink.
             # Отметка обязана быть: удаление файла — тоже изменение.
-            marks[path] = b"<absent>"  # только ASCII: bytes-литерал другого не принимает
+            marks[path] = ABSENT
             continue
         marks[path] = hashlib.sha256(data.replace(b"\r\n", b"\n")).digest()
     return marks
 
 
-def snapshot(scope: str) -> tuple[str, dict[str, bytes]]:
-    """`(отпечаток, пофайловые отметки)`."""
-    marks = file_marks()
+def fingerprint(scope: str, marks: dict[str, bytes]) -> str:
+    """Отпечаток по ГОТОВЫМ отметкам и текущему окружению.
+
+    Отдельно от снятия отметок, потому что зовут его дважды и по-разному: один
+    раз по свежему дереву, другой — по отметкам из старой записи, чтобы
+    отличить «изменились файлы» от «изменилось окружение».
+    """
     digest = hashlib.sha256()
     digest.update(f"область\0{scope}\0".encode())
     for mark in environment_marks():
         digest.update(f"окружение\0{mark}\0".encode())
     for path in sorted(marks):
         digest.update(path.encode("utf-8", "surrogateescape") + b"\0" + marks[path])
-    return digest.hexdigest()[:16], marks
+    return digest.hexdigest()[:16]
+
+
+def snapshot(scope: str) -> tuple[str, dict[str, bytes]]:
+    """`(отпечаток, пофайловые отметки)`."""
+    marks = file_marks()
+    return fingerprint(scope, marks), marks
 
 
 def changed_between(before: dict[str, bytes], after: dict[str, bytes]) -> list[str]:
     return sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
+
+
+def changed_status(before: dict[str, bytes], after: dict[str, bytes]) -> list[tuple[str, str]]:
+    """То же, но со статусом: `A` добавлен, `M` изменён, `D` исчез.
+
+    Статус нужен отбору тестов: исчезнувший файл — это отдельный триггер.
+    Пропавшую проверку не видно ни в одной карте зависимостей: у удалённого
+    кода нет строк, которые кто-то мог бы исполнить.
+
+    **Исчезновение — это `ABSENT`, а не отсутствие ключа**, и проверять надо
+    именно так. Удалённый файл, который ещё не проиндексировали, `git ls-files
+    --cached` продолжает называть: он есть в индексе. Отметка у него `ABSENT`,
+    ключ на месте, и проверка «пути нет в словаре» считала бы его ИЗМЕНЁННЫМ —
+    то есть триггер на удаление не срабатывал бы ровно в самом частом случае:
+    удалил файл, запустил проверки, ещё не коммитил. Поймано опытом: подмена
+    файла давала «изменился не питоновский файл» вместо «файл исчез».
+    """
+    rows: list[tuple[str, str]] = []
+    for path in changed_between(before, after):
+        if after.get(path, ABSENT) == ABSENT:
+            rows.append(("D", path))
+        elif before.get(path, ABSENT) == ABSENT:
+            rows.append(("A", path))
+        else:
+            rows.append(("M", path))
+    return rows
 
 
 def listing(paths: list[str], limit: int = 5) -> str:
@@ -239,6 +279,79 @@ def listing(paths: list[str], limit: int = 5) -> str:
         return ", ".join(paths)
     tail = len(paths) - limit
     return f"{', '.join(paths[:limit])} и ещё {plural(tail, 'файл', 'файла', 'файлов')}"
+
+
+def latest_entry(entries: list[dict], scope: str) -> dict | None:
+    """Последняя запись о зелёном прогоне этой области.
+
+    Нужна не кэшу (ему хватает совпадения ключа), а отбору тестов: чтобы
+    ответить «что изменилось с тех пор, как всё было проверено», надо знать не
+    хэш того дерева, а его состав.
+    """
+    fitting = [entry for entry in entries if entry.get("scope") == scope and entry.get("marks")]
+    return max(fitting, key=lambda entry: float(entry.get("saved_at", 0)), default=None)
+
+
+def stored_marks(entry: dict) -> dict[str, bytes]:
+    return {path: bytes.fromhex(value) for path, value in entry["marks"].items()}
+
+
+def changed_lines(scope: str, marks: dict[str, bytes]) -> list[str]:
+    """Либо один `FULL:<причина>`, либо строки `<статус>\\t<путь>`."""
+    entry = latest_entry(load_entries(), scope)
+    if entry is None:
+        return ["FULL:нет записи о зелёном прогоне"]
+    if time.time() - float(entry.get("saved_at", 0)) >= ttl_seconds():
+        return ["FULL:запись о зелёном прогоне просрочена"]
+
+    before = stored_marks(entry)
+    # Ключ пересчитывается по СТАРЫМ отметкам, но текущим окружением: разойдётся
+    # с записанным — значит изменились версии пакетов, а не файлы. Тогда прежние
+    # зелёные тесты ни о чём не говорят, сколько бы файлов ни осталось на месте.
+    if fingerprint(scope, before) != entry.get("key"):
+        return ["FULL:изменился состав установленных пакетов"]
+    return [f"{status}\t{path}" for status, path in changed_status(before, marks)]
+
+
+def publish_changed(scope: str, marks: dict[str, bytes]) -> None:
+    """Один ответ на прогон вместо ответа на каждого спрашивающего.
+
+    Спрашивают двое — отбор тестов и `schema-check`, — и каждый вопрос стоит не
+    только снятия отпечатка (секунда-две, на холодном диске больше), но и двух
+    запусков `poetry run`. На прогоне, который затевался ради экономии минут,
+    это десятки секунд впустую.
+
+    Передаётся переменной окружения, а не просто файлом: путь в переменной
+    означает «посчитано ЭТИМ прогоном». Файл сам по себе не сказал бы, от какого
+    он дерева, и однажды ответил бы про вчерашнее.
+    """
+    CACHE_DIR.mkdir(exist_ok=True)
+    path = CACHE_DIR / "changed.txt"
+    path.write_text("\n".join(changed_lines(scope, marks)), encoding="utf-8")
+    os.environ["PRECOMMIT_CHANGED"] = str(path)
+
+
+def report_changed(scope: str) -> int:
+    """Что изменилось с прошлого ЗЕЛЁНОГО прогона. Печатает по пути на строку.
+
+    База отсчёта — не `HEAD` и не индекс, а последнее дерево, про которое
+    известно, что оно прошло проверки. Разница принципиальная: после коммита
+    рабочее дерево чистое, и `git diff` сказал бы «ничего не менялось» про
+    правки, которые никто не проверял. А если зелёный прогон был три коммита
+    назад — сюда попадут изменения всех трёх.
+
+    Нет записи или изменилось окружение — `FULL` с причиной: отбор в таких
+    условиях не имеет базы, а безопасная сторона у отбора — прогнать всё.
+    """
+    try:
+        marks = file_marks()
+    except Exception as error:  # noqa: BLE001 — нет git, не репозиторий, что угодно
+        print(f"FULL:снимок дерева не снялся ({type(error).__name__}: {error})")
+        return 0
+
+    for line in changed_lines(scope, marks):
+        print(line)
+    return 0
 
 
 def load_entries() -> list[dict]:
@@ -296,6 +409,12 @@ def run(command: list[str]) -> tuple[int, float]:
 
 
 def main(argv: list[str]) -> int:
+    # `changed` — справка для отбора тестов, а не запуск команды: печатает, что
+    # изменилось с прошлого зелёного прогона. Здесь, а не отдельным скриптом,
+    # потому что база отсчёта — запись этого самого кэша.
+    if argv and argv[0] == "changed":
+        return report_changed(argv[1] if len(argv) > 1 else "precommit")
+
     force = "--force" in argv or os.environ.get("PRECOMMIT_CACHE") == "off"
     argv = [arg for arg in argv if arg != "--force"]
     edges = [index for index, arg in enumerate(argv) if arg in SEPARATORS]
@@ -327,6 +446,7 @@ def main(argv: list[str]) -> int:
                 report_hit(scope, key, len(marks), entry)
                 return 0
 
+    publish_changed(scope, marks)
     code, duration = run(command)
     if code != 0:
         # Красное не запоминается никогда: иначе первая же правка осталась бы
@@ -358,7 +478,17 @@ def main(argv: list[str]) -> int:
         entry for entry in alive if not (entry.get("scope") == scope and entry.get("key") == key)
     ]
     alive.append(
-        {"scope": scope, "key": key, "files": len(marks), "saved_at": time.time(), "duration": duration}
+        {
+            "scope": scope,
+            "key": key,
+            "files": len(marks),
+            "saved_at": time.time(),
+            "duration": duration,
+            # Не только хэш, но и СОСТАВ дерева: по нему отбор тестов отвечает
+            # «что изменилось с тех пор, как всё было проверено». Хэша для
+            # этого не хватает — он говорит только «то же или не то же».
+            "marks": {path: mark.hex() for path, mark in marks.items()},
+        }
     )
     try:
         save_entries(alive)
