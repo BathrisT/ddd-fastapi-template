@@ -71,11 +71,8 @@ async def engine(test_settings: Settings, run_migrations: None):
 
 @pytest.fixture(scope="session")
 async def session_factory(engine):
-    # Те же аргументы, что у боевой фабрики в `ProcessProvider.session_factory`,
-    # и `autoflush=False` здесь особенно важен: под автосбросом репозиторий,
-    # забывший явный `flush()`, всё равно зелёный — незаметно отправленная
-    # вставка приезжает внутри следующего произвольного запроса. Разойдись эти
-    # две фабрики, интеграционные тесты проверяли бы семантику, которой в
+    # Те же аргументы, что у боевой фабрики: под автосбросом репозиторий,
+    # забывший явный `flush()`, оставался бы зелёным на семантике, которой в
     # проде нет.
     return async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 

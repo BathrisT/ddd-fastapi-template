@@ -29,15 +29,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def conflict_handler(_: Request, exc: ConflictError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
-    # 400, а НЕ 422, и это не вкусовщина. 422 у FastAPI уже занят отказом схемы
-    # запроса, и тело у него другой формы: `detail` — список объектов
-    # (`loc`/`msg`/`type`), именно её публикует OpenAPI как
-    # `HTTPValidationError`, и именно её разбирают сгенерированные клиенты.
-    # Отдавая доменный отказ тем же кодом со строкой в `detail`, мы бы сделали
-    # один код ответа двумя несовместимыми схемами — и клиент, читающий
-    # `detail[0].msg`, падал бы ровно там, где сервер как раз внятно объяснил
-    # причину. Достижимо это на шаблонной ручке: `{"name": "   "}` проходит
-    # `min_length=1`, а сценарий стрипает пробелы и отказывает уже по существу.
+    # 400, а НЕ 422: 422 у FastAPI занят отказом схемы, и тело там другой
+    # формы — `detail` списком объектов. Один код с двумя схемами уронил бы
+    # клиента, читающего `detail[0].msg`, ровно там, где сервер объяснил
+    # причину. Достижимо на шаблонной ручке: `{"name": "   "}`.
     @app.exception_handler(ValidationError)
     async def validation_handler(_: Request, exc: ValidationError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})

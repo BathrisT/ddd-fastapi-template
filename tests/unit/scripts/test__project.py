@@ -18,12 +18,8 @@ from _project import is_repository_port, names_repository, plural
 
 class TestSourceRoot:
     def test_missing_source_root_fails_loudly(self, repo: Repo) -> None:
-        """Пустой скан — отказ, а не успех.
-
-        Это худший из отказов сторожа: `rglob` по несуществующему каталогу
-        возвращает пустоту, и проверка печатает «OK», не посмотрев ни на один
-        файл. Проект с другой раскладкой получал бы зелёный `make precommit`
-        при половине мёртвых проверок.
+        """Пустой скан — отказ, а не успех: `rglob` по несуществующему
+        каталогу пуст, и проверка печатает «OK», не открыв ни одного файла.
         """
         repo.pyproject('[tool.code_layout]\nsource_root = "src"\n')
 

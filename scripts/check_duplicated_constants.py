@@ -96,13 +96,9 @@ def check_duplicated_constants() -> list[str]:
         if len({f for f, _ in places}) < threshold:
             continue
         # Одного совпадения значений мало: `5` — это и суббота, и НДС, и лимит
-        # неудачных входов, и сложность блока. Такая находка не подсказывает
-        # ничего, а приучает пропускать проверку не глядя.
-        #
-        # Признак СКОПИРОВАННОГО правила — общее слово в именах: ровно так
-        # разъехался час рассылки (`_SEND_HOUR`, `_REPORT_SEND_HOUR`,
-        # `_SURVEY_SEND_HOUR`, `_CLOSE_HOUR` — все про HOUR). Поэтому внутри
-        # одного значения группируем ещё и по общему слову.
+        # входов. Признак СКОПИРОВАННОГО правила — общее слово в именах: так
+        # разъехался час рассылки (`_SEND_HOUR`, `_REPORT_SEND_HOUR`, ...),
+        # поэтому внутри значения группируем ещё и по слову.
         by_token: dict[str, list[tuple[str, str]]] = defaultdict(list)
         for relative, name in places:
             for token in _tokens(name):

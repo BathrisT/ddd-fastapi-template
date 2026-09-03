@@ -95,11 +95,8 @@ class TestNarrow:
     def test_the_form_the_makefile_actually_passes(self) -> None:
         """`TEST_DIR = ./tests`, поэтому спрашивают `./tests/unit` — с точкой.
 
-        Пока сравнение было строковым, `./tests/unit` не пересекалось с
-        `tests/unit/app` ни в одну сторону: отбор возвращал пусто, и
-        `make test-unit` вместе с `make check` не запускали НИ ОДНОГО теста,
-        сообщая «менять нечего». Прежние тесты проверяли форму без точки — ту,
-        которой в Makefile нет.
+        При строковом сравнении она не пересекалась с `tests/unit/app`, и
+        `make test-unit` не запускал НИ ОДНОГО теста, сообщая «менять нечего».
         """
         assert narrow(["tests/unit/app", "tests/integration"], "./tests/unit") == ["tests/unit/app"]
 

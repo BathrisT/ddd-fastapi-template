@@ -61,13 +61,9 @@ def check_layer_roles(config: dict) -> list[str]:
 def check_protocols_in_ports() -> list[str]:
     """`class X(Protocol)` в ядре — это контракт, а контракты живут в ports/.
 
-    Три фабрики установки портала лежали внутри `use_cases/portal/install.py`:
-    формально порты, физически посреди сценария, и найти их можно было только
-    случайно.
-
-    Проверяются только `application` и `domain`. Инфраструктура и интерфейс —
-    адаптеры, и шов между двумя их собственными классами (`TokenRefresher`,
-    `KnowledgeBackend`) это их дело, а не контракт ядра.
+    Три фабрики лежали посреди `use_cases/portal/install.py`: формально порты,
+    найти случайно. Проверяются только `application` и `domain` — шов между
+    двумя собственными классами адаптера это его дело.
     """
     ports_dir = APP_DIR / "application" / "ports"
     scopes = (APP_DIR / "application", APP_DIR / "domain")
