@@ -49,6 +49,8 @@ layout-check:
 	poetry run python scripts/check_duplicated_constants.py
 	poetry run python scripts/check_class_shape.py
 	poetry run python scripts/check_use_cases.py
+	poetry run python scripts/check_identifier_charset.py
+	poetry run python scripts/check_comment_budget.py
 
 # Границы: что имеет право лежать в routes/, откуда хендлер берёт зависимости,
 # не потерялся ли вход по дороге и кто разговаривает с базой. Вход здесь —
