@@ -5,6 +5,8 @@
 !.claude/hooks/*
 !.claude/agents/
 !.claude/agents/*
+!.claude/skills/
+!.claude/skills/**
 
 # Python
 __pycache__/

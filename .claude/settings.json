@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/review_gate.py\""
+            "command": "python -S -E \"${CLAUDE_PROJECT_DIR}/.claude/hooks/review_gate.py\""
           }
         ]
       }
