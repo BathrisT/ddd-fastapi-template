@@ -14,6 +14,8 @@ from uuid import uuid4
 
 from redis.asyncio import Redis
 
+from app.application.ports.key_guard import KeyGuard
+
 # KEYS[1] — ключ, ARGV[1] — наш токен. Удаляем, только если владеем.
 _RELEASE_IF_MINE = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -23,7 +25,7 @@ return 0
 """
 
 
-class RedisKeyGuard:
+class RedisKeyGuard(KeyGuard):
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
         self._release = redis.register_script(_RELEASE_IF_MINE)

@@ -1,9 +1,10 @@
 """Публикатор-заглушка для тестов: событий в Taskiq не создаёт."""
 
+from app.application.ports.event_publisher import EventPublisher
 from app.domain.events.base import DomainEvent
 
 
-class NoopEventPublisher:
+class NoopEventPublisher(EventPublisher):
     """Does nothing — used in tests."""
 
     async def publish(self, event: DomainEvent) -> None:

@@ -28,6 +28,7 @@ from _project import (  # noqa: E402
     require_dir,
     source_root,
 )
+from _providers import Bindings  # noqa: E402
 
 APP_DIR = source_root()
 PYPROJECT = ROOT / "pyproject.toml"
@@ -136,16 +137,6 @@ def _imported_from(tree: ast.Module, package: str) -> set[str]:
     return names
 
 
-def _import_sources(tree: ast.Module) -> dict[str, str]:
-    """`{имя: модуль, откуда ввезено}` — чтобы узнать, где живёт порт."""
-    sources: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            for alias in node.names:
-                sources[alias.asname or alias.name] = node.module
-    return sources
-
-
 class DataAccess:
     """Классы, которые знают про колонки, — адаптеры доступа к данным.
 
@@ -176,43 +167,6 @@ class DataAccess:
         return found
 
 
-class Bindings:
-    """Где порт встречается со своей реализацией.
-
-    В Python связь структурная: `SqlUserRepo` не наследует `UserRepo`, и по
-    самим файлам их не сопоставить. Но композиция обязана назвать обе стороны
-    явно — иначе контейнер не соберёт граф, — поэтому пара берётся оттуда.
-    """
-
-    @staticmethod
-    def of(tree: ast.Module, relative: str, adapters: dict) -> list[tuple]:
-        """`[(адаптер, порт, модуль порта, файл, строка)]`."""
-        sources = _import_sources(tree)
-        pairs: list[tuple] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "provide":
-                adapter = getattr(node.args[0], "id", "") if node.args else ""
-                if adapter not in adapters:
-                    continue
-                port = next(
-                    (getattr(k.value, "id", "") for k in node.keywords if k.arg == "provides"),
-                    "",
-                )
-                pairs.append((adapter, port, sources.get(port, ""), relative, node.lineno))
-            elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                built = {
-                    getattr(inner.func, "id", "")
-                    for inner in ast.walk(node)
-                    if isinstance(inner, ast.Call)
-                }
-                adapter = next((name for name in built if name in adapters), "")
-                if not adapter or not node.returns:
-                    continue
-                port = getattr(node.returns, "id", "")
-                pairs.append((adapter, port, sources.get(port, ""), relative, node.lineno))
-        return pairs
-
-
 def check_repository_ports(config: dict) -> list[str]:
     """Адаптер знает про колонки — его порт обязан называться репозиторием.
 
@@ -241,7 +195,9 @@ def check_repository_ports(config: dict) -> list[str]:
     for path, relative, tree in _sources():
         if not _allowed(path, provider_dirs):
             continue
-        for adapter, port, module, where, line in Bindings.of(tree, relative, adapters):
+        for adapter, _, port, module, where, line in Bindings.of(tree, relative):
+            if adapter not in adapters:
+                continue
             if not port:
                 errors.append(
                     f"{where}:{line}: `{adapter}` работает с ORM-моделями и отдаётся как есть, "

@@ -60,6 +60,7 @@ interface-check:
 	poetry run python scripts/check_fastapi_routes.py
 	poetry run python scripts/check_package_coverage.py
 	poetry run python scripts/check_composition.py
+	poetry run python scripts/check_port_inheritance.py
 	poetry run python scripts/check_entrypoint_registry.py
 	poetry run python scripts/check_db_access.py
 

@@ -13,13 +13,14 @@
 
 from loguru import logger
 
+from app.application.ports.event_publisher import EventPublisher
 from app.application.ports.task_queue import TaskQueue
 from app.domain.events.base import DomainEvent
 from app.domain.events.user_registered import UserRegistered
 from app.interface.worker.handlers import users
 
 
-class EventRouter:
+class EventRouter(EventPublisher):
     """Реализация порта `EventPublisher`: публикация = постановка нужной задачи."""
 
     def __init__(self, queue: TaskQueue) -> None:

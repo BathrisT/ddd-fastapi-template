@@ -15,10 +15,11 @@
 
 from app.application.dto.tasks import TaskIntent, WelcomeUser
 from app.application.ports.task_queue import TaskQueue
+from app.application.ports.task_submitter import TaskSubmitter
 from app.interface.worker.handlers import users
 
 
-class TaskRouter:
+class TaskRouter(TaskSubmitter):
     """Реализация порта `TaskSubmitter`: отдельной обёртки нет, как и у событий."""
 
     def __init__(self, queue: TaskQueue) -> None:

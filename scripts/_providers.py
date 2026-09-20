@@ -17,6 +17,7 @@
 
 import ast
 from pathlib import Path
+from typing import NamedTuple
 
 CALLS = {"provide", "provide_all", "alias", "from_context"}
 KEYWORDS = {"provides", "source"}
@@ -98,4 +99,101 @@ class Built:
                             names = TypeNames.result_of(node.returns)
                     for name in names:
                         found.setdefault(name, f"{path.name}:{node.lineno}")
+        return found
+
+
+class Binding(NamedTuple):
+    """Что композиция отдаёт под портом и где она это сказала."""
+
+    impl: str
+    impl_module: str
+    port: str
+    port_module: str
+    where: str
+    line: int
+
+
+class Bindings:
+    """Порт встречается со своей реализацией.
+
+    Связь структурная, по самим файлам их не сопоставить; композиция же обязана
+    назвать обе стороны явно, иначе не соберётся граф. Разбор общий с
+    `check_db_access`: два разбора однажды разойдутся и не скажут об этом.
+    """
+
+    @staticmethod
+    def _import_sources(tree: ast.Module) -> dict[str, str]:
+        sources: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                for alias in node.names:
+                    sources[alias.asname or alias.name] = node.module
+        return sources
+
+    @staticmethod
+    def _single(names: set[str]) -> str:
+        """Порт — одно имя. `X | None` портом не объявляют, и гадать тут нечего."""
+        return next(iter(names)) if len(names) == 1 else ""
+
+    @staticmethod
+    def _built_in_body(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+        """Кого фабрика создаёт или пропускает через себя.
+
+        Два способа, и оба живые: `return SqlCommitter(session)` — создаёт,
+        `return client` при `client: TaskiqTaskQueue` — псевдоним, когда один
+        объект отдают под двумя портами.
+        """
+        created = [
+            name
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Call)
+            for name in [getattr(inner.func, "id", "")]
+            if name
+        ]
+        arguments = {
+            argument.arg: TypeNames.of(argument.annotation)
+            for argument in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        }
+        passed = [
+            name
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Return | ast.Yield) and isinstance(inner.value, ast.Name)
+            for name in arguments.get(inner.value.id, set())
+        ]
+        return created + passed
+
+    @staticmethod
+    def of(tree: ast.Module, relative: str) -> list[Binding]:
+        sources = Bindings._import_sources(tree)
+        found: list[Binding] = []
+
+        def add(impl: str, port: str, line: int) -> None:
+            found.append(
+                Binding(
+                    impl, sources.get(impl, ""), port, sources.get(port, ""), relative, line
+                )
+            )
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "provide":
+                impl = getattr(node.args[0], "id", "") if node.args else ""
+                port = Bindings._single(
+                    {
+                        name
+                        for keyword in node.keywords
+                        if keyword.arg == "provides"
+                        for name in TypeNames.of(keyword.value)
+                    }
+                )
+                if impl:
+                    add(impl, port, node.lineno)
+            elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.returns:
+                # Фабрика — помеченная декоратором. Без этого приватный хелпер
+                # рядом с провайдером считался бы биндингом, и сторож упал бы
+                # на коде, к графу зависимостей не относящемся.
+                if not Built._decorated(node):
+                    continue
+                port = Bindings._single(TypeNames.result_of(node.returns))
+                for impl in Bindings._built_in_body(node):
+                    add(impl, port, node.lineno)
         return found

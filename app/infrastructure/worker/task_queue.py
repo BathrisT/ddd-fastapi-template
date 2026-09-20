@@ -7,10 +7,11 @@
 
 from taskiq import AsyncBroker
 
-from app.application.ports.job_results import JobOutcome
+from app.application.ports.job_results import JobOutcome, JobResults
+from app.application.ports.task_queue import TaskQueue
 
 
-class TaskiqTaskQueue:
+class TaskiqTaskQueue(TaskQueue, JobResults):
     def __init__(self, broker: AsyncBroker) -> None:
         self._broker = broker
 

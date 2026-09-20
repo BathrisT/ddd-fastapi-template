@@ -9,6 +9,7 @@ HTTP-клиент свой, а не процессный: исходящие ч�
 import httpx
 from openai import AsyncOpenAI
 
+from app.application.ports.services.ai_service import AiService
 from app.config import LLM
 
 _WELCOME_PROMPT = (
@@ -17,7 +18,7 @@ _WELCOME_PROMPT = (
 )
 
 
-class OpenAiService:
+class OpenAiService(AiService):
     def __init__(self, settings: LLM) -> None:
         self._model = settings.model
         self._http = httpx.AsyncClient(proxy=settings.proxy, timeout=settings.timeout)

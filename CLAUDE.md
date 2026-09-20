@@ -40,7 +40,8 @@ make query-check      # N+1: чтение из репозитория внутр
 make migrations-check # у цепочки ревизий alembic ровно одна голова
 make gate-check       # проверяющий контур: каждый сторож достижим из `make precommit`
 make layout-check     # раскладка кода: где что лежит и какого размера
-make interface-check  # слой входа: что в routes/, откуда зависимости
+make interface-check  # слой входа: что в routes/, откуда зависимости,
+                      # называет ли реализация свой порт
 make lint             # ruff check --fix + format
 make typecheck        # mypy
 make layers           # tach check — проверка зависимостей между слоями DDD
@@ -341,13 +342,22 @@ denied — следуй инструкции прямо в тексте отка
   HTTP-хендлерами, в `interface/`, а не в инфраструктуре.
 - **Регистрация обработчика — явная операция**, а не побочный эффект импорта:
   реестр `composition/worker_tasks.py`, имя задачи — имя функции-обработчика.
+- **Своя реализация называет свой порт вслух:** `class SqlUserRepo(UserRepo)`.
+  Соответствия порту не проверяет сегодня никто — у `provide(SqlUserRepo,
+  provides=UserRepo)` обе стороны приняты как `Any`, и опечатка в имени метода
+  выходит наружу `AttributeError` в проде. Наследование отдаёт сверку сигнатур
+  mypy; забытый метод он не ловит (тот наследуется телом `...` и молча вернёт
+  `None`) — это добирает сторож. Чужого класса правило не касается: структурное
+  соответствие продолжает работать, и оно по-прежнему единственный способ
+  подать в порт то, что мы не правим.
 
 Сборка — dishka: `AppContainer.build(settings, broker, *провайдеры входа)`.
 Зависимости хендлера объявляются `FromDishka[T]`, `Depends` остаётся только у
 верификаторов входа.
 
 Проверяется: пункт про импорт инфраструктуры — `tach`, `Depends` вне
-верификаторов — `scripts/check_composition.py` (в `make interface-check`).
+верификаторов — `scripts/check_composition.py`, реализация мимо своего порта —
+`scripts/check_port_inheritance.py` (оба в `make interface-check`).
 
 ---
 

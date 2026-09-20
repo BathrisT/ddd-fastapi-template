@@ -13,12 +13,13 @@ from sqlalchemy import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.repositories.user_repo import UserRepo
 from app.domain.exceptions import ConflictError, NotFoundError
 from app.domain.models.user import User
 from app.infrastructure.db.models.user import UserORM
 
 
-class SqlUserRepo:
+class SqlUserRepo(UserRepo):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

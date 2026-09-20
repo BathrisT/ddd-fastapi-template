@@ -1,7 +1,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.committer import Committer
 
-class SqlCommitter:
+
+class SqlCommitter(Committer):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

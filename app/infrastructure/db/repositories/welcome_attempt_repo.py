@@ -19,11 +19,12 @@ ORM-моделью, а не по импорту sqlalchemy: **здесь имп�
 (`scripts/check_db_access.py`).
 """
 
+from app.application.ports.repositories.welcome_attempt_repo import WelcomeAttemptRepo
 from app.infrastructure.db.autonomous_session import AutonomousSession
 from app.infrastructure.db.models.welcome_attempt import WelcomeAttemptORM
 
 
-class SqlWelcomeAttemptRepo:
+class SqlWelcomeAttemptRepo(WelcomeAttemptRepo):
     def __init__(self, autonomous: AutonomousSession) -> None:
         self._autonomous = autonomous
 
