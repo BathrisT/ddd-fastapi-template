@@ -25,13 +25,13 @@ endif
 APP_DIR = ./app
 TEST_DIR = ./tests
 
-.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check migrations-check typecheck layers layers-show layers-report schema-check test test-selected test-unit test-integration check bandit precommit precommit-steps precommit-steps-full review-pack install init template-diff template-update template-graft
+.PHONY: lint lint-check layout-check interface-check effects-check env-check query-check migrations-check gate-check typecheck layers layers-show layers-report schema-check test test-selected test-unit test-integration check bandit precommit precommit-steps precommit-steps-full review-pack install init template-diff template-update template-graft
 
 lint:
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) --fix $(ARGS)
 	poetry run ruff format $(APP_DIR) $(TEST_DIR) $(ARGS)
 
-lint-check: layout-check interface-check effects-check env-check query-check migrations-check
+lint-check: layout-check interface-check effects-check env-check query-check migrations-check gate-check
 	poetry run python scripts/check_not_initialised.py
 	poetry run ruff check $(APP_DIR) $(TEST_DIR) $(ARGS)
 	poetry run ruff format $(APP_DIR) $(TEST_DIR) --check $(ARGS)
@@ -91,6 +91,14 @@ query-check:
 # Базы не требует: heads читаются из каталога ревизий.
 migrations-check:
 	poetry run python scripts/check_migration_heads.py
+
+# Проверяющий контур: сторож, не достижимый из `make precommit`, не выполняется
+# никогда — и выглядит это в точности как пройденная проверка. Критерий именно
+# достижимость, а не упоминание в файле: вызов, выведенный из гейта
+# комментарием, в тексте остаётся, и греп по нему показал бы зелёное.
+gate-check:
+	poetry run python scripts/check_gate_wiring.py
+	poetry run python scripts/check_config_paths.py
 
 typecheck:
 	poetry run mypy $(APP_DIR) $(ARGS)

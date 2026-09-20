@@ -23,6 +23,7 @@ import argparse
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -100,6 +101,8 @@ class Template:
         self.ref = str(section.get("ref", "master")).strip() or "master"
         self.manual = [str(p).strip("/") for p in section.get("manual", [])]
         self.alert = [str(p).strip("/") for p in section.get("alert", [])]
+        self.sections_in = [str(p) for p in section.get("sections_in", [])]
+        self.sections_diverged = [str(p) for p in section.get("sections_diverged", [])]
 
     def missing_url(self) -> str:
         if self.url:
@@ -151,6 +154,84 @@ class Report:
             return ""
         width = max(len(p) for p in paths)
         return "\n".join(f"{p:<{width}}  {template.warn_for(p)}" for p in paths)
+
+
+class Sections:
+    """Посекционная сверка конфига с шаблоном.
+
+    Файл целиком сравнивать бесполезно: он расходится всегда, и потеря ВНУТРИ
+    него невидима. Сверяется наличие секций и ключей, а не значения.
+    """
+
+    def __init__(self, template: "Template") -> None:
+        self.files = template.sections_in
+        self.diverged = template.sections_diverged
+
+    @staticmethod
+    def of(tree: dict, prefix: str = "") -> dict:
+        """`{секция: ключи}` по всем таблицам конфига.
+
+        Массив таблиц (`[[tool.mypy.overrides]]`) складывается в одну секцию:
+        какие из них чьи, по содержимому не сказать.
+        """
+        found: dict = {}
+        keys: set = set()
+        for name, value in tree.items():
+            here = f"{prefix}.{name}" if prefix else str(name)
+            if isinstance(value, dict):
+                found.update(Sections.of(value, here))
+            elif isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+                merged: dict = {}
+                for item in value:
+                    merged.update(item)
+                found.update(Sections.of(merged, here))
+            else:
+                keys.add(str(name))
+        if prefix:
+            found[prefix] = keys
+        return found
+
+    def skipped(self, section: str) -> bool:
+        return any(section == name or section.startswith(f"{name}.") for name in self.diverged)
+
+    def drift(self, ours: str, theirs: str) -> list:
+        """Что есть у шаблона и нет у нас. Обратное — наше дело, молчим."""
+        try:
+            mine = Sections.of(tomllib.loads(ours))
+            template = Sections.of(tomllib.loads(theirs))
+        except tomllib.TOMLDecodeError as error:
+            return [f"конфиг не разобрать: {error}"]
+
+        rows = []
+        for section, keys in sorted(template.items()):
+            if self.skipped(section):
+                continue
+            if section not in mine:
+                rows.append(f"[{section}] — секции нет вовсе, в шаблоне ключей: {len(keys)}")
+                continue
+            missing = sorted(keys - mine[section])
+            if missing:
+                rows.append(f"[{section}] — не доехали ключи: {', '.join(missing)}")
+        return rows
+
+    def report(self, revision: str = "FETCH_HEAD") -> None:
+        """Блок отчёта по каждому наблюдаемому файлу."""
+        for name in self.files:
+            path = ROOT / name
+            theirs = git("show", f"{revision}:{name}")
+            if theirs.returncode != 0 or not path.is_file():
+                Report.block(f"Секции {name}", "файла нет с одной из сторон — сверить нечего")
+                continue
+            rows = self.drift(path.read_text(encoding="utf-8"), theirs.stdout)
+            body = "\n".join(rows)
+            if rows:
+                body += (
+                    "\n\nЗначения не сверяются — порог, поднятый проектом, законен.\n"
+                    "Сверяется наличие: секция и ключ теряются молча, обычно при\n"
+                    "разрешении конфликта «взять свою версию файла целиком».\n"
+                    "Сознательно разведённое — в `sections_diverged`."
+                )
+            Report.block(f"Секции {name}", body or "все секции шаблона на месте")
 
 
 class Conflicts:
@@ -207,7 +288,10 @@ class Sync:
     def diff(self) -> int:
         commits = self.incoming()
         if not commits:
+            # Дрейф секций смотрим и здесь: он не про входящие коммиты, а про
+            # то, что уже потеряно, — и без входящих его не увидит никто.
             print("\nШаблон не ушёл вперёд — брать нечего.")
+            Sections(self.template).report()
             return 0
 
         ours, theirs = (out("rev-list", "--left-right", "--count", "HEAD...FETCH_HEAD") or "0\t0").split()
@@ -225,6 +309,8 @@ class Sync:
         else:
             body = Report.files(paths, self.template)
         Report.block("Конфликты при слиянии", body)
+
+        Sections(self.template).report()
 
         alerting = self.template.alerting(incoming)
         if alerting:
@@ -269,6 +355,7 @@ class Sync:
         merged = git("merge", "--no-edit", "-m", f"обновление из шаблона @{self.template.ref}", "FETCH_HEAD")
         if merged.returncode == 0:
             Report.block("Слито без конфликтов", raw("diff", "--stat", f"{base}..HEAD"))
+            Sections(self.template).report()
             self.report_alerting(alerting)
             if alerting:
                 print(
@@ -296,6 +383,11 @@ class Sync:
                 + f"\n\n  Ветка-буфер удалена, дерево осталось на `{base}` нетронутым."
             )
         Report.block(f"Конфликты ({plural(len(paths), 'файл', 'файла', 'файлов')})", Report.files(paths, self.template))
+        # Дрейф секций показывается и здесь: конфликт и есть тот момент, ради
+        # которого сверка заведена — секции теряются, когда берут свою версию
+        # файла целиком. Конфликт в самом конфиге даст «не разобрать», и это
+        # честнее молчания: разобрав маркеры, дрейф смотрят ещё раз.
+        Sections(self.template).report()
         self.report_alerting(alerting)
         if any(under(p, self.template.manual) for p in paths):
             print(

@@ -8,14 +8,16 @@ pydantic-модели, енумы, `TypedDict`, `Protocol`, исключения
 моделей это нормально. А вот пять use case'ов в одном файле означают, что файл
 называется не тем, что в нём лежит.
 
-**Порт или секрет не может быть аргументом `@staticmethod`.** У статического
-метода нет `self`, держать зависимость негде — и её начинают передавать
-аргументом на каждый вызов. Верный признак: место вызова само прибивает первые
-аргументы через `partial`, то есть руками изображает конструктор. Порт и секрет
-идут в `__init__`, объект собирается в deps.
+**Внедряемая зависимость не может быть аргументом `@staticmethod`.** Держать её
+негде — нет `self`, — поэтому её подают на каждый вызов, а место вызова руками
+изображает конструктор через `partial`.
 
-Обычные методы под вторую проверку не попадают: там порт аргументом бывает
-законен (скоупнутый на запрос репозиторий).
+Внедряемое — это порты И всё, что умеет собрать контейнер (`_providers.py`):
+папка `ports/` пропускает конкретный класс-сервис, а композиция называет
+внедряемое явно. Секреты ловятся отдельно, по имени параметра.
+
+Не в счёт: обычные методы (там порт аргументом законен), сама композиция и
+метод, отдающий тот же тип, что принял, — он преобразователь, а не потребитель.
 """
 
 import ast
@@ -25,7 +27,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ast_shapes import decorator_names as _decorator_names  # noqa: E402
 from _ast_shapes import is_data_carrier as _is_data_carrier  # noqa: E402
-from _project import ROOT, source_root  # noqa: E402
+from _project import ROOT, source_root, tool_config  # noqa: E402
+from _providers import Built  # noqa: E402
 
 APP_DIR = source_root()
 PORTS_DIR = APP_DIR / "application" / "ports"
@@ -53,6 +56,24 @@ def _annotation_names(node: ast.expr | None) -> set[str]:
         except SyntaxError:
             return set()
     return set()
+
+
+def _composition_roots() -> list[Path]:
+    """Где собирают граф. Там принимать зависимости аргументом — и есть работа."""
+    roots = [ROOT / path for path in tool_config("composition").get("composition_roots", [])]
+    return [root for root in roots if root.is_dir()]
+
+
+def _injectable() -> dict[str, str]:
+    """`{тип: почему его нельзя подавать аргументом}`.
+
+    Порты плюс всё, что умеет собрать контейнер. Папка `ports/` пропускает
+    конкретный класс-сервис, а композиция называет внедряемое явно.
+    """
+    reasons = {name: "порт" for name in _port_names()}
+    for name, where in Built.types(_composition_roots()).items():
+        reasons.setdefault(name, f"его собирает контейнер, {where}")
+    return reasons
 
 
 def _port_names() -> set[str]:
@@ -87,10 +108,11 @@ def check_one_class_per_file() -> list[str]:
 
 
 def check_static_dependencies() -> list[str]:
-    ports = _port_names()
+    injectable = _injectable()
+    composition = _composition_roots()
     errors: list[str] = []
     for path in sorted(APP_DIR.rglob("*.py")):
-        if PORTS_DIR in path.parents:
+        if PORTS_DIR in path.parents or any(root in path.parents for root in composition):
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -104,6 +126,11 @@ def check_static_dependencies() -> list[str]:
                 if not _decorator_names(fn) & {"staticmethod", "classmethod"}:
                     continue
                 args = [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+                # Метод, отдающий тот же тип, что принял, — преобразователь, а не
+                # потребитель: `AutonomousEngine.for_(engine) -> AsyncEngine`
+                # делает из движка движок, зависимость при этом живёт в чужом
+                # `__init__`. Потребитель возвращает что-то другое или ничего.
+                produced = _annotation_names(fn.returns)
                 for arg in args:
                     if arg.arg in _SECRET_PARAMS:
                         errors.append(
@@ -111,11 +138,14 @@ def check_static_dependencies() -> list[str]:
                             f"`{arg.arg}` аргументом — ему место в __init__"
                         )
                         continue
-                    hit = _annotation_names(arg.annotation) & ports
-                    if hit:
+                    hit = sorted(_annotation_names(arg.annotation) & set(injectable))
+                    if hit and not set(hit) <= produced:
+                        named = ", ".join(f"`{name}` ({injectable[name]})" for name in hit)
                         errors.append(
-                            f"{relative}:{fn.lineno}: {cls.name}.{fn.name} принимает порт "
-                            f"{', '.join(sorted(hit))} аргументом — ему место в __init__"
+                            f"{relative}:{fn.lineno}: {cls.name}.{fn.name} принимает "
+                            f"зависимость аргументом: {named}. Держать её у статического "
+                            "метода негде, поэтому её подают на каждый вызов — место "
+                            "зависимости в `__init__`"
                         )
     return errors
 

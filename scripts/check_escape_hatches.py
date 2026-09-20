@@ -8,13 +8,18 @@
 
 Правила берутся из `[tool.escape_hatches]`: пометка, требуемое объяснение и
 область. Проверяется только `app/` — в тестах дублёры и пометки законны.
+
+Вторая половина — про конфиг, а не про код: код, которым держится ДРУГОЕ
+правило, нельзя отключить на весь проект. В соседнем боевом проекте под
+`PLC0415` в общем списке пряталось 25 импортов внутри функций, то есть штатный
+обход `tach`. Список и причины — `[tool.escape_hatches.protected]`.
 """
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _project import source_root, tool_config  # noqa: E402
+from _project import pyproject, source_root, tool_config  # noqa: E402
 
 APP_DIR = source_root()
 
@@ -79,6 +84,57 @@ def rules() -> list[Rule]:
     return [Rule(raw) for raw in (configured if configured else _DEFAULT_RULES)]
 
 
+class Protected:
+    """Код, которым держится другое правило, нельзя отключить на весь проект.
+
+    Опасность не в подавлении, а в связке: отключают один код — перестаёт
+    работать соседний сторож, и об этом не сообщает никто. Построчная пометка
+    сюда не относится, речь о списках, действующих всюду и молча.
+    """
+
+    @staticmethod
+    def _value(tree: dict, dotted: str) -> object:
+        node: object = tree
+        for part in dotted.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return None
+            node = node[part]
+        return node
+
+    @staticmethod
+    def _related(entry: str, code: str) -> bool:
+        """Запись накрывает защищённый код (или наоборот).
+
+        Граница по цифре, а не по строке: селектор `A` (flake8-builtins) не
+        должен считаться подавлением `ANN401` только потому, что так совпали
+        буквы.
+        """
+        if entry == code:
+            return True
+        long, short = (entry, code) if len(entry) > len(code) else (code, entry)
+        return long.startswith(short) and long[len(short)].isdigit()
+
+    @staticmethod
+    def violations(config: dict, tree: dict) -> list[str]:
+        codes = {str(code): str(why) for code, why in config.get("codes", {}).items()}
+        if not codes:
+            return []
+
+        errors: list[str] = []
+        for dotted in config.get("lists", []):
+            value = Protected._value(tree, str(dotted))
+            if not isinstance(value, list):
+                continue
+            for entry in value:
+                hit = next((c for c in codes if Protected._related(str(entry), c)), "")
+                if hit:
+                    errors.append(
+                        f"`{dotted}` глушит `{entry}` на весь проект — а этим кодом "
+                        f"держится другое правило: {codes[hit]}."
+                    )
+        return errors
+
+
 def main() -> int:
     active = [rule for rule in rules() if rule.valid()]
     if not active:
@@ -88,7 +144,7 @@ def main() -> int:
         )
         return 2
 
-    errors: list[str] = []
+    errors = Protected.violations(tool_config("escape_hatches").get("protected", {}), pyproject())
     for path in sorted(APP_DIR.rglob("*.py")):
         try:
             text = path.read_text(encoding="utf-8")
@@ -110,7 +166,8 @@ def main() -> int:
         return 1
 
     names = ", ".join(rule.name for rule in active)
-    print(f"Заглушки проверок: объяснены все ({names})")
+    guarded = len(tool_config("escape_hatches").get("protected", {}).get("codes", {}))
+    print(f"Заглушки проверок: объяснены все ({names}); защищённых кодов: {guarded}")
     return 0
 
 

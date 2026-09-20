@@ -123,3 +123,82 @@ class TestEscapeHatches:
 
         assert result.code == 2
         assert result.mentions("ОШИБКА НАСТРОЙКИ")
+
+
+PROTECTED = """
+[tool.escape_hatches.protected]
+lists = ["tool.ruff.lint.ignore", "tool.mypy.disable_error_code"]
+
+[tool.escape_hatches.protected.codes]
+PLC0415 = "импорт внутри функции — штатный способ обойти tach"
+DTZ = "наивное время"
+"""
+
+RUFF_IGNORES = """
+[tool.ruff.lint]
+ignore = ["PLR0913", "PLC0415"]
+"""
+
+MYPY_DISABLES = """
+[tool.mypy]
+disable_error_code = ["DTZ005"]
+"""
+
+HARMLESS = """
+[tool.ruff.lint]
+ignore = ["E501"]
+"""
+
+
+class TestProtectedCodes:
+    def test_protected_code_in_the_global_list(self, repo: Repo) -> None:
+        """Тот самый случай: под кодом в общем списке прячется обход tach."""
+        repo.pyproject(PROTECTED + RUFF_IGNORES)
+
+        result = repo.run("check_escape_hatches")
+
+        assert result.code == 1
+        assert result.mentions("PLC0415")
+        assert result.mentions("обойти tach")
+
+    def test_family_selector_covers_the_code(self, repo: Repo) -> None:
+        """`DTZ` в защищённых гасится и записью `DTZ005`."""
+        repo.pyproject(PROTECTED + MYPY_DISABLES)
+
+        result = repo.run("check_escape_hatches")
+
+        assert result.code == 1
+
+    def test_neighbouring_letters_are_not_a_match(self, repo: Repo) -> None:
+        """`A` — это flake8-builtins, а не начало `ANN401`."""
+        repo.pyproject(
+            """
+            [tool.escape_hatches.protected]
+            lists = ["tool.ruff.lint.ignore"]
+
+            [tool.escape_hatches.protected.codes]
+            ANN401 = "`Any` без объяснения"
+
+            [tool.ruff.lint]
+            ignore = ["A"]
+            """
+        )
+
+        result = repo.run("check_escape_hatches")
+
+        assert result.code == 0
+
+    def test_unprotected_code_is_allowed(self, repo: Repo) -> None:
+        repo.pyproject(PROTECTED + HARMLESS)
+
+        result = repo.run("check_escape_hatches")
+
+        assert result.code == 0
+
+    def test_without_the_list_the_rule_is_off(self, repo: Repo) -> None:
+        """Нет `[tool.escape_hatches.protected]` — нет и проверки."""
+        repo.pyproject(RUFF_IGNORES)
+
+        result = repo.run("check_escape_hatches")
+
+        assert result.code == 0

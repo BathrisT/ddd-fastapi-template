@@ -15,6 +15,7 @@ SQL ЖИВЁТ В РЕПОЗИТОРИЯХ. Правило 4 CLAUDE.md опис�
 """
 
 import ast
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -328,6 +329,118 @@ def check_repository_variable_names(config: dict) -> list[str]:
     return errors
 
 
+class CommitOwners:
+    """Фиксирует транзакцию только её владелец.
+
+    Дверей две: порт `Committer` у сценария и своя короткая транзакция из
+    фасада. Всё остальное фиксирует чужую сессию — заодно и то, чего сценарий
+    фиксировать не собирался, а следом уходит событие.
+    """
+
+    @staticmethod
+    def _marked(annotation: ast.expr, markers: set[str]) -> bool:
+        text = ast.unparse(annotation)
+        return any(marker in text for marker in markers)
+
+    @staticmethod
+    def _token(node: ast.expr) -> str:
+        """Как получатель читается на месте вызова: `self._committer` → `_committer`."""
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        if isinstance(node, ast.Name):
+            return node.id
+        return ""
+
+    @staticmethod
+    def _named(token: str) -> set[str]:
+        """Слова имени: `_committerLog` → {`committer`, `log`}."""
+        spaced = re.sub(r"(?<!^)(?=[A-Z])", "_", token)
+        return set(re.findall(r"[a-z0-9]+", spaced.lower()))
+
+    @staticmethod
+    def _declared(tree: ast.Module, markers: set[str]) -> set[str]:
+        """Имена, объявленные типом-маркером: аргументы, поля, аннотации класса."""
+        found: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AnnAssign) and CommitOwners._marked(node.annotation, markers):
+                found.add(CommitOwners._token(node.target))
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            typed = {
+                argument.arg
+                for argument in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+                if argument.annotation and CommitOwners._marked(argument.annotation, markers)
+            }
+            found |= typed
+            # Куда аргумент лёг: зовут-то поле, а тип виден только в конструкторе.
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Assign) and getattr(inner.value, "id", "") in typed:
+                    found.add(CommitOwners._token(inner.targets[0]))
+        return found - {""}
+
+    @staticmethod
+    def _autonomous_vars(tree: ast.Module, holders: set[str]) -> set[str]:
+        """Сессии из `async with <фасад>.open() as session`.
+
+        Область видимости не отслеживается: имя, законное в одном `with`,
+        признаётся законным на весь файл. Лишнее разрешение делает сторожа
+        снисходительнее, а точный учёт областей — вторым интерпретатором.
+        """
+        found: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.With | ast.AsyncWith):
+                continue
+            for item in node.items:
+                opened = item.context_expr
+                if not (isinstance(opened, ast.Call) and isinstance(opened.func, ast.Attribute)):
+                    continue
+                if CommitOwners._token(opened.func.value) in holders and item.optional_vars:
+                    found.add(CommitOwners._token(item.optional_vars))
+        return found - {""}
+
+    @staticmethod
+    def violations(relative: str, tree: ast.Module, config: dict) -> list[str]:
+        markers = {str(name) for name in config.get("commit_markers", [])}
+        facade = str(config.get("autonomous_facade", "")).strip()
+        allowed = CommitOwners._declared(tree, markers)
+        if facade:
+            allowed |= CommitOwners._autonomous_vars(
+                tree, CommitOwners._declared(tree, {facade})
+            )
+        # Имя маркера СЛОВОМ в имени получателя: `self._committer` законен и
+        # там, где тип объявлен в другом файле (порт приезжает через dishka).
+        # Именно словом, а не подстрокой: иначе `precommitter` сойдёт за него.
+        words = {marker.lower() for marker in markers}
+
+        errors: list[str] = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            if node.func.attr != "commit":
+                continue
+            token = CommitOwners._token(node.func.value)
+            if token in allowed or CommitOwners._named(token) & words:
+                continue
+            errors.append(
+                f"{relative}:{node.lineno}: `{token or '?'}.commit()` — фиксация чужой "
+                "транзакции. Границу ставит сценарий через `Committer`; запись, обязанная "
+                f"пережить его откат, идёт через `{facade or 'фасад автономной сессии'}`."
+            )
+        return errors
+
+
+def check_commit_owners(config: dict) -> list[str]:
+    """`commit()` зовёт владелец транзакции, а не тот, кому удобно."""
+    if not config.get("commit_markers"):
+        return []
+    errors: list[str] = []
+    for path, relative, tree in _sources():
+        if _allowed(path, config.get("commit_owners", [])):
+            continue
+        errors.extend(CommitOwners.violations(relative, tree, config))
+    return errors
+
+
 def main() -> int:
     config = _config()
     errors = (
@@ -335,6 +448,7 @@ def main() -> int:
         + check_orm_stays_in_repositories(config)
         + check_repository_ports(config)
         + check_repository_variable_names(config)
+        + check_commit_owners(config)
     )
     if errors:
         print("Доступ к базе мимо границы:\n")

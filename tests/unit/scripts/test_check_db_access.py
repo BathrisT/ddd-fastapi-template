@@ -1,6 +1,6 @@
 """Граница базы: сессию открывает композиция, SQL пишет репозиторий.
 
-Четыре правила в одном сторожe, и самое хрупкое из них — последнее: репозиторий
+Пять правил в одном сторожe, и самое хрупкое из них — про имена: репозиторий
 опознают ПО ИМЕНИ ТИПА сразу три проверки, поэтому порт, названный
 `WelcomeJournal`, делает слепыми и `check_composition`, и `check_n_plus_one`,
 не сообщая об этом ни одной из них.
@@ -269,3 +269,133 @@ class TestRepositoryVariableNames:
         result = repo.run("check_db_access")
 
         assert result.code == 0
+
+
+COMMIT = (
+    DB_ACCESS
+    + """
+commit_markers = ["Committer"]
+autonomous_facade = "AutonomousSession"
+commit_owners = ["app/infrastructure/db/committer.py"]
+"""
+)
+
+
+class TestCommitOwners:
+    def test_use_case_commits_through_the_port(self, repo: Repo) -> None:
+        prepare(repo)
+        repo.pyproject(COMMIT)
+        repo.write(
+            "app/application/use_cases/register_user.py",
+            """
+            class RegisterUserUseCase:
+                def __init__(self, committer: Committer) -> None:
+                    self._committer = committer
+
+                async def execute(self) -> None:
+                    await self._committer.commit()
+            """,
+        )
+
+        result = repo.run("check_db_access")
+
+        assert result.code == 0
+
+    def test_port_named_otherwise_is_recognised_by_type(self, repo: Repo) -> None:
+        """Имя поля своё, а тип объявлен — этого достаточно."""
+        prepare(repo)
+        repo.pyproject(COMMIT)
+        repo.write(
+            "app/application/use_cases/register_user.py",
+            """
+            class RegisterUserUseCase:
+                def __init__(self, tx: Committer) -> None:
+                    self._tx = tx
+
+                async def execute(self) -> None:
+                    await self._tx.commit()
+            """,
+        )
+
+        result = repo.run("check_db_access")
+
+        assert result.code == 0
+
+    def test_repository_commits_someones_session(self, repo: Repo) -> None:
+        """Тот самый случай: адаптер фиксирует заодно работу сценария."""
+        prepare(repo)
+        repo.pyproject(COMMIT)
+        repo.write(
+            "app/infrastructure/db/repositories/user_repo.py",
+            """
+            class SqlUserRepo:
+                def __init__(self, session) -> None:
+                    self._session = session
+
+                async def add(self, user) -> None:
+                    self._session.add(user)
+                    await self._session.commit()
+            """,
+        )
+
+        result = repo.run("check_db_access")
+
+        assert result.code == 1
+        assert result.mentions("фиксация чужой")
+
+    def test_autonomous_session_commits_its_own_transaction(self, repo: Repo) -> None:
+        prepare(repo)
+        repo.pyproject(COMMIT)
+        repo.write(
+            "app/infrastructure/db/repositories/welcome_attempt_repo.py",
+            """
+            class SqlWelcomeAttemptRepo:
+                def __init__(self, autonomous: AutonomousSession) -> None:
+                    self._autonomous = autonomous
+
+                async def record(self, outcome: str) -> None:
+                    async with self._autonomous.open() as session:
+                        await session.commit()
+            """,
+        )
+
+        result = repo.run("check_db_access")
+
+        assert result.code == 0
+
+    def test_committer_implementation_commits_its_own_session(self, repo: Repo) -> None:
+        prepare(repo)
+        repo.pyproject(COMMIT)
+        repo.write(
+            "app/infrastructure/db/committer.py",
+            """
+            class SqlCommitter:
+                def __init__(self, session) -> None:
+                    self._session = session
+
+                async def commit(self) -> None:
+                    await self._session.commit()
+            """,
+        )
+
+        result = repo.run("check_db_access")
+
+        assert result.code == 0
+
+    def test_service_commits_the_request_session(self, repo: Repo) -> None:
+        """Сессия приехала аргументом — всё равно чужая."""
+        prepare(repo)
+        repo.pyproject(COMMIT)
+        repo.write(
+            "app/application/services/repair.py",
+            """
+            class Repair:
+                async def run(self, session) -> None:
+                    await session.commit()
+            """,
+        )
+
+        result = repo.run("check_db_access")
+
+        assert result.code == 1
+        assert result.mentions("session.commit()")

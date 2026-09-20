@@ -112,7 +112,7 @@ class TestStaticDependencies:
         result = repo.run("check_class_shape")
 
         assert result.code == 1
-        assert result.mentions("принимает порт UserRepo")
+        assert result.mentions("`UserRepo` (порт)")
 
     def test_static_method_taking_a_secret(self, repo: Repo) -> None:
         repo.write(
@@ -147,6 +147,136 @@ class TestStaticDependencies:
             """
             class Report:
                 async def build(self, users_repo: "UserRepo") -> None: ...
+            """,
+        )
+
+        result = repo.run("check_class_shape")
+
+        assert result.code == 0
+
+
+COMPOSITION = """
+[tool.composition]
+composition_roots = ["app/composition"]
+"""
+
+PROVIDER = """
+from dishka import Provider, Scope, from_context, provide
+
+from app.application.services.analytics.recorder import EventRecorder
+from app.config import Settings
+
+
+class AppProvider(Provider):
+    scope = Scope.APP
+
+    settings = from_context(provides=Settings, scope=Scope.APP)
+    users = provide(SqlUserRepo, provides=UserRepo)
+
+    @provide
+    def recorder(self, settings: Settings) -> EventRecorder: ...
+"""
+
+
+def with_container(repo: Repo) -> None:
+    """Проект с композицией: контейнер умеет собирать четыре типа."""
+    repo.pyproject(COMPOSITION)
+    repo.write("app/composition/providers/app.py", PROVIDER)
+
+
+class TestContainerBuiltDependencies:
+    def test_service_built_by_container(self, repo: Repo) -> None:
+        """Соседский случай: сервис не порт и лежит не в ports/, а внедряется."""
+        with_container(repo)
+        repo.write(
+            "app/interface/api/routes/search.py",
+            """
+            class SearchEvent:
+                @staticmethod
+                async def record(recorder: "EventRecorder", query: str) -> None: ...
+            """,
+        )
+
+        result = repo.run("check_class_shape")
+
+        assert result.code == 1
+        assert result.mentions("EventRecorder")
+        assert result.mentions("собирает контейнер")
+
+    def test_implementation_counts_too(self, repo: Repo) -> None:
+        """`provide(SqlUserRepo, provides=UserRepo)` объявляет обе стороны."""
+        with_container(repo)
+        repo.write(
+            "app/application/services/report.py",
+            """
+            class Report:
+                @staticmethod
+                async def build(repo: "SqlUserRepo") -> None: ...
+            """,
+        )
+
+        result = repo.run("check_class_shape")
+
+        assert result.code == 1
+        assert result.mentions("SqlUserRepo")
+
+    def test_from_context_is_not_forgotten(self, repo: Repo) -> None:
+        """`Settings` объявлен формой, которую теряет наивный разбор."""
+        with_container(repo)
+        repo.write(
+            "app/application/services/report.py",
+            """
+            class Report:
+                @staticmethod
+                async def build(settings: "Settings") -> None: ...
+            """,
+        )
+
+        result = repo.run("check_class_shape")
+
+        assert result.code == 1
+        assert result.mentions("Settings")
+
+    def test_composition_may_take_dependencies(self, repo: Repo) -> None:
+        """Композиция и есть место, где зависимости собирают руками."""
+        with_container(repo)
+        repo.write(
+            "app/composition/container.py",
+            """
+            class AppContainer:
+                @staticmethod
+                def build(settings: "Settings") -> None: ...
+            """,
+        )
+
+        result = repo.run("check_class_shape")
+
+        assert result.code == 0
+
+    def test_same_type_transformer_is_not_a_consumer(self, repo: Repo) -> None:
+        """Отдаёт тот же тип, что принял: зависимость живёт в чужом `__init__`."""
+        with_container(repo)
+        repo.write(
+            "app/infrastructure/db/autonomous_engine.py",
+            """
+            class AutonomousEngine:
+                @staticmethod
+                def for_(main: "EventRecorder") -> "EventRecorder": ...
+            """,
+        )
+
+        result = repo.run("check_class_shape")
+
+        assert result.code == 0
+
+    def test_unknown_type_is_not_a_dependency(self, repo: Repo) -> None:
+        with_container(repo)
+        repo.write(
+            "app/application/services/report.py",
+            """
+            class Report:
+                @staticmethod
+                async def build(payload: "SearchOutcome") -> None: ...
             """,
         )
 
