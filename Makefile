@@ -42,6 +42,9 @@ lint-check: layout-check interface-check effects-check env-check query-check mig
 # сам молчаливо обходился. `grep` не спасает: в Windows его тоже нет.
 
 # Раскладка кода: где что лежит и какого размера. CLAUDE.md, «Раскладка кода».
+pipeline:
+	poetry run python scripts/pipeline_map.py
+
 layout-check:
 	poetry run python scripts/check_module_functions.py
 	poetry run python scripts/check_file_length.py
@@ -51,6 +54,7 @@ layout-check:
 	poetry run python scripts/check_use_cases.py
 	poetry run python scripts/check_identifier_charset.py
 	poetry run python scripts/check_comment_budget.py
+	poetry run python scripts/check_positional_args.py
 
 # Границы: что имеет право лежать в routes/, откуда хендлер берёт зависимости,
 # не потерялся ли вход по дороге и кто разговаривает с базой. Вход здесь —

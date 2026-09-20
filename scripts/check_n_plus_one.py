@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _project import source_root, tool_config  # noqa: E402
+from _symbols import Constructor  # noqa: E402
 
 APP_DIR = source_root()
 
@@ -120,44 +121,6 @@ class Call:
 
 def names_in(node: ast.expr) -> set[str]:
     return {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
-
-
-class Constructor:
-    @staticmethod
-    def attribute_types(node: ast.ClassDef) -> dict[str, str]:
-        """`self._users = users` при `users: UserRepo` -> `{'_users': 'UserRepo'}`.
-
-        Только прямое присваивание параметра полю. Вычисленные значения не
-        разбираются: тип там неизвестен, а гадать в блокирующей проверке —
-        значит завести ложные срабатывания.
-        """
-        for item in node.body:
-            if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if item.name != "__init__":
-                continue
-            # Все три вида параметров: конструктор с `*` — обычная форма, а с
-            # одними `args` роль хранилища в нём не видна вовсе. Сосед по
-            # правилу (`check_db_access`) собирает так же.
-            declared = {
-                argument.arg: ast.unparse(argument.annotation)
-                for argument in (
-                    *item.args.posonlyargs, *item.args.args, *item.args.kwonlyargs
-                )
-                if argument.annotation is not None
-            }
-            found: dict[str, str] = {}
-            for statement in item.body:
-                if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-                    continue
-                target, value = statement.targets[0], statement.value
-                if not (isinstance(target, ast.Attribute) and isinstance(value, ast.Name)):
-                    continue
-                owner = target.value
-                if isinstance(owner, ast.Name) and owner.id == "self" and value.id in declared:
-                    found[target.attr] = declared[value.id]
-            return found
-        return {}
 
 
 class Finder(ast.NodeVisitor):

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Карта пайплайна</title>
+<style>
+  /* Тема не выводится из окружения: встроенный просмотр IDE сообщает светлую
+     схему независимо от темы самой IDE, поэтому белый фон в тёмной IDE — не
+     потерянные стили, а честный ответ на `prefers-color-scheme`. Отсюда явный
+     переключатель; системная схема остаётся умолчанием. */
+  :root {
+    --bg: #ffffff; --panel: #f6f7f9; --line: #e3e6ea; --text: #1c1f23; --dim: #6b7280;
+    --accent: #2f6feb; --port: #7c3aed; --branch: #b45309; --par: #0f766e; --repeat: #9ca3af;
+    --guide: #e6e9ee; --hover: #eef2f8; --sel: #dbe7ff;
+    --mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1e1f22; --panel: #2b2d30; --line: #393b40; --text: #dfe1e5; --dim: #8b8f96;
+      --accent: #6aa3ff; --port: #c08cff; --branch: #e2a336; --par: #4dd0b1; --repeat: #6b7280;
+      --guide: #34363b; --hover: #2f3136; --sel: #35405a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1e1f22; --panel: #2b2d30; --line: #393b40; --text: #dfe1e5; --dim: #8b8f96;
+    --accent: #6aa3ff; --port: #c08cff; --branch: #e2a336; --par: #4dd0b1; --repeat: #6b7280;
+    --guide: #34363b; --hover: #2f3136; --sel: #35405a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 var(--mono);
+    display: flex; flex-direction: column; }
+
+  /* Список входов — не колонка слева: в узкой панели IDE она съедает половину
+     ширины, а до нужного входа приходится листать. Выпадающий список занимает
+     одну строку и ищется с клавиатуры. */
+  header { padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; }
+  .bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  select, input[type=search], button { font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+  select { flex: 1 1 220px; min-width: 0; max-width: 100%; }
+  input[type=search] { flex: 0 1 140px; min-width: 0; }
+  button { cursor: pointer; }
+  button:hover { background: var(--hover); }
+  .meta { color: var(--dim); font-size: 11px; margin-top: 4px; white-space: normal; }
+  .crumbs { padding: 4px 10px; border-bottom: 1px solid var(--line); color: var(--dim);
+    font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+
+  .calltree { overflow: auto; padding: 6px 0 40px; flex: 1; min-height: 0; }
+  .row[hidden] { display: none !important; }
+  .row { display: flex; align-items: baseline; gap: 6px; padding: 1px 10px 1px 0; white-space: nowrap; }
+  .row:hover { background: var(--hover); }
+  .row.sel { background: var(--sel); }
+  .rail { flex: none; }
+  .rail i { display: inline-block; width: 14px; border-left: 1px solid var(--guide); height: 1.45em;
+    vertical-align: bottom; margin-bottom: -.35em; }
+  .tw { flex: none; width: 13px; text-align: center; color: var(--dim); cursor: pointer; user-select: none; }
+  .mark { flex: none; width: 13px; text-align: center; color: var(--dim); }
+  .name { overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  .port { color: var(--port); }
+  .note { color: var(--dim); }
+  .again { color: var(--repeat); cursor: pointer; text-decoration: underline dotted; }
+  .row.branch .name, .row.exit .name { color: var(--branch); }
+  .row.parallel .name, .row.task .name, .row.loop .name { color: var(--par); }
+  .row.repeat .name, .row.dup .name { color: var(--repeat); }
+  .row.leaf .name { color: var(--dim); }
+  .lvl { flex: none; color: var(--guide); font-size: 10px; width: 16px; text-align: right; }
+  .tip { position: fixed; z-index: 9; max-width: 92vw; padding: 7px 9px; border: 1px solid var(--line);
+    background: var(--panel); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.25); font-size: 12px;
+    white-space: normal; pointer-events: none; }
+  .tip b { color: var(--accent); font-weight: 600; }
+  .tip .where { color: var(--dim); }
+  .hid { display: none; }
+  .empty { padding: 16px 10px; color: var(--dim); white-space: normal; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <select id="entry"></select>
+    <input type="search" id="q" placeholder="фильтр входов" autocomplete="off">
+    <button id="wider" title="развернуть ещё уровень">+</button>
+    <button id="narrower" title="свернуть уровень">−</button>
+    <button id="dups" title="повторяющиеся поддеревья">↻ свёрнуты</button>
+    <button id="theme" title="светлая или тёмная">◐</button>
+  </div>
+  <div class="meta" id="hint">клик по строке — открыть файл в IDE</div>
+</header>
+<div class="crumbs" id="crumbs">&nbsp;</div>
+<div class="calltree" id="tree"><div class="empty">Выбери вход в списке сверху.</div></div>
+<div class="tip hid" id="tip"></div>
+<script id="map" type="application/json">/*MAP*/</script>
+<script id="token" type="application/json">/*TOKEN*/</script>
+<script>
+const MAP = JSON.parse(document.getElementById('map').textContent);
+// Ключ живёт только в этом файле, а он в .gitignore — см. pipeline_map.py.
+const TOKEN = JSON.parse(document.getElementById('token').textContent || '""');
+const MARK = { call:'·', leaf:'·', branch:'⎇', exit:'←', parallel:'∥', task:'∥', loop:'↺', repeat:'↻',
+  http:'◆', cli:'◆', bot:'◆', queue:'◆', entry:'◆' };
+const KINDS = { http:'HTTP', queue:'Очередь', cli:'CLI', bot:'Бот', entry:'Входы' };
+const BUDGET = 40;
+let current = null, collapseDups = true, deep = 0, flat = [];
+
+const el = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const count = (ns) => ns.reduce((n, x) => n + 1 + count(x.children || []), 0);
+const say = (text) => { el('hint').textContent = text; };
+
+// Отпечаток поддерева: один и тот же сценарий, вызванный трижды, трижды и
+// раскрывается. Свёртка живёт в отрисовке, а не в построении: в JSON дерево
+// остаётся полным, иначе развернуть повтор по месту было бы нечем.
+const fingerprint = (node) =>
+  node.title + '|' + (node.port || '') + '|' + (node.children || []).map(fingerprint).join(',');
+
+function rows(nodes, depth, out, seen) {
+  for (const node of nodes) {
+    const kids = node.children || [];
+    const print = kids.length ? fingerprint(node) : null;
+    // `opened` ставит клик по слову «повтор»: помечен КОНКРЕТНЫЙ узел, а не
+    // отпечаток, поэтому разворачивается именно тот вызов, по которому нажали.
+    const dup = print && seen.has(print) && !node.opened;
+    if (print) seen.add(print);
+    out.push({ node, depth, dup, kids: dup ? [] : kids });
+    if (!dup) rows(kids, depth + 1, out, seen);
+  }
+  return out;
+}
+
+// Ни развёрнутое целиком, ни свёрнутое целиком не читается: первое пугает
+// сотней строк, второе не показывает ничего. Разворачиваем, пока помещается.
+function budget(all) {
+  let level = 0;
+  for (let d = 0; d < 40; d++) {
+    if (all.filter(r => r.depth <= d).length > BUDGET) break;
+    level = d;
+  }
+  return level;
+}
+
+function render(entry, keepDepth) {
+  current = entry;
+  // Сам вход — корневая строка дерева, а не только заголовок над ним: иначе
+  // верхние шаги висят без хозяина и теряются глазами.
+  flat = rows([entry], 0, [], collapseDups ? new Set() : { has: () => false, add: () => {} });
+  deep = keepDepth === undefined ? budget(flat) : Math.max(0, keepDepth);
+  el('tree').innerHTML = flat.map((row, i) => {
+    const n = row.node;
+    const rail = Array.from({ length: row.depth }, () => '<i></i>').join('');
+    const tw = row.kids.length ? `<span class="tw">${row.depth < deep ? '▾' : '▸'}</span>` : '<span class="tw"></span>';
+    const port = n.port ? `<span class="port">${esc(n.port)} →</span> ` : '';
+    // Подпись, повторяющая заголовок родителя, ничего не добавляет.
+    const above = flat.slice(0, i).reverse().find(r => r.depth < row.depth);
+    const note = n.note && n.note !== (above && above.node.title) ? ` <span class="note">· ${esc(n.note)}</span>` : '';
+    const again = row.dup ? ` <span class="again" data-again="${i}">↻ повтор, развернуть</span>` : '';
+    return `<div class="row ${row.dup ? 'dup' : n.kind}" data-i="${i}" data-d="${row.depth}"${row.depth > deep ? ' hidden' : ''}>`
+      + `<span class="lvl">${row.depth}</span><span class="rail">${rail}</span>${tw}`
+      + `<span class="mark">${MARK[n.kind] || '·'}</span>`
+      + `<span class="name">${port}${esc(n.title)}${note}${again}</span></div>`;
+  }).join('') || '<div class="empty">Вход не зовёт ничего своего: всё, что он делает, — разговор с фреймворком.</div>';
+  el('crumbs').textContent = entry.file + ':' + entry.line + ' · ' + count(entry.children)
+    + ' шагов · развёрнуто уровней: ' + (deep + 1);
+}
+
+const shown = () => [...el('tree').querySelectorAll('.row')];
+
+// Прыжок в код. Служебный HTTP запущенной IDE (63342) открывает файл на
+// строке, но из встроенного просмотра отвечает не всегда: без разрешения
+// неподписанных запросов приходит отказ. Поэтому путь ВСЕГДА кладётся в буфер:
+// `Ctrl+Shift+N`, вставить, Enter — работает при любых настройках.
+const IDE = 'http://localhost:63342';
+
+function ide_urls(node) {
+  // Адрес ВСЕГДА абсолютный. Относительный (`/api/file/...`) резолвится от
+  // источника страницы, а страницу может отдавать что угодно — диск, чужой
+  // локальный сервер, предпросмотр IDE. Тогда запрос уходит не туда, и 404
+  // приходит от постороннего сервера: мгновенно, без диалога, при любых
+  // галках и токенах. Искал я эту разницу долго.
+  const line = node.line || 1;
+  const key = TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '';
+  const inside = (MAP.root_in_project ? MAP.root_in_project + '/' : '') + node.file;
+  const full = MAP.root_abs + '/' + node.file;
+  return [
+    IDE + '/api/file/' + inside + ':' + line + ':1' + key,
+    IDE + '/api/file/' + node.file + ':' + line + ':1' + key,
+    IDE + '/api/file/' + full + ':' + line + ':1' + key,
+  ];
+}
+
+function open_in_ide(node) {
+  if (!node.file) { say('у шага нет файла: это вызов чужой библиотеки'); return; }
+  const short = node.file + ':' + (node.line || 1);
+  try { navigator.clipboard && navigator.clipboard.writeText(short); } catch (e) {}
+
+  // Запрос уходит КАРТИНКОЙ, а не `fetch`, и это не причуда: на `fetch` со
+  // страницы встроенный сервер IDE отвечает 404 по всем формам адреса, а на
+  // тот же самый адрес картинкой — открывает файл. Проверено вживую; ответ
+  // нам не нужен, важно только что запрос дошёл.
+  //
+  // Три формы пути шлём разом: какая из них резолвится, зависит от того, что
+  // IDE считает корнем модуля, а спросить её об этом нечем. Лишние ведут в
+  // тот же файл или никуда.
+  for (const url of ide_urls(node)) {
+    const beacon = new Image();
+    beacon.src = url;
+  }
+  say('открыто: ' + short + '   (путь скопирован — Ctrl+Shift+N, если не открылось)');
+}
+
+el('tree').addEventListener('click', (event) => {
+  const row = event.target.closest('.row');
+  if (!row) return;
+  const index = +row.dataset.i, depth = +row.dataset.d;
+  if (event.target.dataset.again !== undefined) {
+    flat[index].node.opened = true;
+    render(current, deep);
+    return;
+  }
+  if (event.target.classList.contains('tw')) {
+    const open = event.target.textContent === '▾';
+    event.target.textContent = open ? '▸' : '▾';
+    for (let j = index + 1; j < flat.length && flat[j].depth > depth; j++) {
+      const next = el('tree').querySelector(`.row[data-i="${j}"]`);
+      if (!next) continue;
+      if (open) next.hidden = true;
+      else if (flat[j].depth === depth + 1) next.hidden = false;
+    }
+    return;
+  }
+  shown().forEach(r => r.classList.remove('sel'));
+  row.classList.add('sel');
+  open_in_ide(flat[index].node);
+});
+
+el('tree').addEventListener('mousemove', (event) => {
+  const row = event.target.closest('.row'), tip = el('tip');
+  if (!row) { tip.classList.add('hid'); return; }
+  const n = flat[+row.dataset.i].node;
+  if (!n.signature && !n.file && !n.doc) { tip.classList.add('hid'); return; }
+  tip.innerHTML = (n.signature ? `<b>${esc(n.signature)}</b><br>` : '')
+    + (n.file ? `<span class="where">${esc(n.file)}:${n.line || ''}</span><br>` : '')
+    + (n.doc ? esc(n.doc) : '');
+  tip.classList.remove('hid');
+  tip.style.left = Math.max(4, Math.min(event.clientX + 14, innerWidth - 340)) + 'px';
+  tip.style.top = (event.clientY + 16) + 'px';
+});
+el('tree').addEventListener('mouseleave', () => el('tip').classList.add('hid'));
+
+el('wider').onclick = () => current && render(current, deep + 1);
+el('narrower').onclick = () => current && render(current, deep - 1);
+el('dups').onclick = () => {
+  collapseDups = !collapseDups;
+  el('dups').textContent = '↻ ' + (collapseDups ? 'свёрнуты' : 'раскрыты');
+  if (current) render(current);
+};
+el('theme').onclick = () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('pipeline-theme', next); } catch (e) {}
+};
+try {
+  const saved = localStorage.getItem('pipeline-theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+} catch (e) {}
+
+function list(filter) {
+  const groups = {};
+  for (const entry of MAP.entries) {
+    if (filter && !(entry.title + ' ' + entry.file).toLowerCase().includes(filter)) continue;
+    (groups[entry.kind] ||= []).push(entry);
+  }
+  const html = Object.entries(groups).map(([kind, items]) =>
+    `<optgroup label="${esc(KINDS[kind] || kind)} · ${items.length}">` + items.map(entry =>
+      `<option value="${esc(entry.file + '|' + entry.title)}">${esc(entry.title)} — ${count(entry.children)} шагов</option>`
+    ).join('') + '</optgroup>').join('');
+  el('entry').innerHTML = html || '<option value="">ничего не нашлось</option>';
+}
+
+el('entry').addEventListener('change', () => {
+  const [file, title] = (el('entry').value || '').split('|');
+  const entry = MAP.entries.find(e => e.file === file && e.title === title);
+  if (entry) render(entry);
+});
+el('q').addEventListener('input', () => { list(el('q').value.trim().toLowerCase()); el('entry').dispatchEvent(new Event('change')); });
+
+list('');
+el('entry').dispatchEvent(new Event('change'));
+say(MAP.entries.length + ' входов · ' + Object.keys(MAP.wiring).length + ' портов сшито · клик по строке копирует путь и открывает файл');
+</script>
+</body>
+</html>

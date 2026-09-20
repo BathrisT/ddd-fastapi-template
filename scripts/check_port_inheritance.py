@@ -17,44 +17,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _project import ROOT, plural, require_dir, tool_config
-from _providers import Binding, Bindings
+from _project import ROOT, plural, require_dir, tool_config  # noqa: E402
+from _providers import Binding, Bindings  # noqa: E402
+from _symbols import Modules  # noqa: E402
 
 
 class Classes:
     """Определения классов проекта по имени модуля: `app.x.y` → файл → класс."""
-
-    @staticmethod
-    def _tree(module: str) -> ast.Module | None:
-        path = ROOT / (module.replace(".", "/") + ".py")
-        if not path.is_file():
-            path = ROOT / module.replace(".", "/") / "__init__.py"
-        try:
-            return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except (SyntaxError, OSError):
-            return None
-
-    @staticmethod
-    def definition(module: str, name: str) -> ast.ClassDef | None:
-        tree = Classes._tree(module)
-        if tree is None:
-            return None
-        for node in tree.body:
-            if isinstance(node, ast.ClassDef) and node.name == name:
-                return node
-        return None
-
-    @staticmethod
-    def _imports(module: str) -> dict[str, str]:
-        tree = Classes._tree(module)
-        if tree is None:
-            return {}
-        return {
-            alias.asname or alias.name: node.module
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.module
-            for alias in node.names
-        }
 
     @staticmethod
     def _base_names(node: ast.ClassDef) -> list[str]:
@@ -69,13 +38,13 @@ class Classes:
     def ancestors(module: str, node: ast.ClassDef) -> set[str]:
         """Имена всех предков, включая непрямых: порт бывает под примесью."""
         found: set[str] = set()
-        imports = Classes._imports(module)
+        imports = Modules.imports(module)
         for name in Classes._base_names(node):
             if name in found:
                 continue
             found.add(name)
             parent_module = imports.get(name, module)
-            parent = Classes.definition(parent_module, name)
+            parent = Modules.definition(parent_module, name)
             if parent is not None:
                 found |= Classes.ancestors(parent_module, parent)
         return found
@@ -94,12 +63,12 @@ class Classes:
             if isinstance(inner, ast.FunctionDef | ast.AsyncFunctionDef)
             and not inner.name.startswith("_")
         }
-        imports = Classes._imports(module)
+        imports = Modules.imports(module)
         for name in Classes._base_names(node):
             parent_module = imports.get(name, module)
             if ports_root and parent_module.replace(".", "/").startswith(ports_root):
                 continue
-            parent = Classes.definition(parent_module, name)
+            parent = Modules.definition(parent_module, name)
             if parent is not None:
                 found |= Classes.methods(parent_module, parent, ports_root)
         return found
@@ -116,7 +85,7 @@ class Ports:
 
     @staticmethod
     def required(binding: Binding) -> set[str]:
-        node = Classes.definition(binding.port_module, binding.port)
+        node = Modules.definition(binding.port_module, binding.port)
         if node is None:
             return set()
         return Classes.methods(binding.port_module, node)
@@ -143,7 +112,7 @@ class Adapters:
         for binding in Adapters._bindings(provider_dirs):
             if binding.impl in exempt or not Ports.declared(binding, ports_root):
                 continue
-            node = Classes.definition(binding.impl_module, binding.impl)
+            node = Modules.definition(binding.impl_module, binding.impl)
             if node is None:
                 continue
             place = f"{binding.where}:{binding.line}"
