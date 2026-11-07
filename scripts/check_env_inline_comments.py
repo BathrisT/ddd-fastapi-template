@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _project import ROOT, plural, tool_config  # noqa: E402
 
 DEFAULT_PATTERNS = (".env", ".env.*", "*.env")
-DEFAULT_SKIP_DIRS = (".git", ".venv", "venv", "node_modules", "__pycache__", ".mypy_cache")
+DEFAULT_SKIP_DIRS = (".git", ".venv", "venv", "node_modules", "__pycache__", ".mypy_cache", ".scratchpad")
 
 
 class Finding:

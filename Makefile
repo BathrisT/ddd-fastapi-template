@@ -55,6 +55,9 @@ layout-check:
 	poetry run python scripts/check_identifier_charset.py
 	poetry run python scripts/check_comment_budget.py
 	poetry run python scripts/check_positional_args.py
+	poetry run python scripts/check_explicit_state.py
+	poetry run python scripts/check_object_ownership.py
+	poetry run python scripts/check_text_encoding.py
 
 # Границы: что имеет право лежать в routes/, откуда хендлер берёт зависимости,
 # не потерялся ли вход по дороге и кто разговаривает с базой. Вход здесь —

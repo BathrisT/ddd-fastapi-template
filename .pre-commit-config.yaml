@@ -6,7 +6,7 @@ repos:
         entry: make precommit
         language: system
         pass_filenames: false
-        types: [python]
+        always_run: true
       - id: layers
         name: DDD layer check (tach)
         entry: make layers

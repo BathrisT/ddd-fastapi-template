@@ -127,6 +127,13 @@ class TestEnvInlineComments:
 
         assert result.code == 0
 
+    def test_scratchpad_env_fixtures_are_not_project_configuration(self, repo: Repo) -> None:
+        repo.pyproject(PATTERNS)
+        repo.write(".env.example", "APP__ENV=development\n")
+        repo.write(".scratchpad/task/fixture/.env.example", "TEST=1 # intentional fixture\n")
+
+        assert repo.run("check_env_inline_comments").code == 0
+
     def test_envrc_is_a_shell_script_and_not_an_env_file(self, repo: Repo) -> None:
         repo.pyproject(PATTERNS)
         repo.write(".env.example", "APP__ENV=development\n")

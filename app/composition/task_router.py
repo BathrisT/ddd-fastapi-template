@@ -26,8 +26,9 @@ class TaskRouter(TaskSubmitter):
         self._queue = queue
 
     async def submit(self, intent: TaskIntent) -> str:
-        if isinstance(intent, WelcomeUser):
-            return await self._queue.enqueue(users.welcome_user.__name__, user_id=intent.user_id)
+        match intent:
+            case WelcomeUser(user_id=user_id):
+                return await self._queue.enqueue(users.welcome_user.__name__, user_id=user_id)
 
         raise NotImplementedError(
             f"Для намерения {type(intent).__name__} нет ветки в TaskRouter.submit"

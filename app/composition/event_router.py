@@ -27,9 +27,10 @@ class EventRouter(EventPublisher):
         self._queue = queue
 
     async def publish(self, event: DomainEvent) -> None:
-        if isinstance(event, UserRegistered):
-            await self._queue.enqueue(users.welcome_user.__name__, user_id=event.user_id)
-            return
+        match event:
+            case UserRegistered(user_id=user_id):
+                await self._queue.enqueue(users.welcome_user.__name__, user_id=user_id)
+                return
 
         # Забытая маршрутизация выглядит как «регистрация есть, приветствия
         # нет»: сценарий отработал, задача не появилась. Лог, а не исключение —

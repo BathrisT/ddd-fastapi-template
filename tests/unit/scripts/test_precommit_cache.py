@@ -12,10 +12,25 @@
 
 import hashlib
 import sys
+from fnmatch import fnmatch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-from precommit_cache import ABSENT, changed_between, changed_status, fingerprint, latest_entry
+from precommit_cache import (
+    ABSENT,
+    DEFAULT_IGNORE,
+    changed_between,
+    changed_status,
+    fingerprint,
+    ignore_patterns,
+    latest_entry,
+)
+
+
+def test_text_documents_participate_in_precommit_cache() -> None:
+    for path in ("README.md", "docs/rules/guide.md", ".claude/agents/reviewer.md"):
+        for patterns in (DEFAULT_IGNORE, ignore_patterns()):
+            assert not any(fnmatch(path, pattern) for pattern in patterns)
 
 
 def mark(text: str) -> bytes:

@@ -17,19 +17,21 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
-_engines: dict[str, AsyncEngine] = {}
-
 
 class AutonomousEngine:
+    _engines: ClassVar[dict[str, AsyncEngine]] = {}
+
     @staticmethod
     def for_(main_engine: AsyncEngine) -> AsyncEngine:
         """Автономный engine для того же URL, что у основного (кэш на процесс)."""
         url = main_engine.url.render_as_string(hide_password=False)
-        engine = _engines.get(url)
+        engine = AutonomousEngine._engines.get(url)
         if engine is None:
             engine = create_async_engine(url, poolclass=NullPool)
-            _engines[url] = engine
+            AutonomousEngine._engines[url] = engine
         return engine
